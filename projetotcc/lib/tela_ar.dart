@@ -1,16 +1,21 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:ar_flutter_plugin/ar_flutter_plugin.dart';
-import 'package:ar_flutter_plugin/datatypes/config_planedetection.dart';
-import 'package:ar_flutter_plugin/datatypes/node_types.dart';
-import 'package:ar_flutter_plugin/managers/ar_anchor_manager.dart';
-import 'package:ar_flutter_plugin/managers/ar_location_manager.dart';
-import 'package:ar_flutter_plugin/managers/ar_object_manager.dart';
-import 'package:ar_flutter_plugin/managers/ar_session_manager.dart';
-import 'package:ar_flutter_plugin/models/ar_node.dart';
+import 'package:ar_flutter_plugin_plus/ar_flutter_plugin.dart';
+import 'package:ar_flutter_plugin_plus/datatypes/config_planedetection.dart';
+import 'package:ar_flutter_plugin_plus/datatypes/node_types.dart';
+import 'package:ar_flutter_plugin_plus/managers/ar_anchor_manager.dart';
+import 'package:ar_flutter_plugin_plus/managers/ar_location_manager.dart';
+import 'package:ar_flutter_plugin_plus/managers/ar_object_manager.dart';
+import 'package:ar_flutter_plugin_plus/managers/ar_session_manager.dart';
+import 'package:ar_flutter_plugin_plus/models/ar_node.dart';
+import 'package:ar_flutter_plugin_plus/models/ar_anchor.dart';
 import 'package:vector_math/vector_math_64.dart' as math;
 
 class TelaAR extends StatefulWidget {
-  const TelaAR({super.key});
+  // A lista de caminhos das imagens que vêm da galeria do main.dart
+  final List<String> imagensAlvo;
+
+  const TelaAR({super.key, required this.imagensAlvo});
 
   @override
   State<TelaAR> createState() => _TelaARState();
@@ -19,11 +24,13 @@ class TelaAR extends StatefulWidget {
 class _TelaARState extends State<TelaAR> {
   ARSessionManager? arSessionManager;
   ARObjectManager? arObjectManager;
-  ARNode? objeto3D;
+  ARAnchorManager? arAnchorManager;
+
+  // Guarda as âncoras para sabermos que páginas já têm o 3D por cima
+  Map<String, ARNode> objetosNasPaginas = {};
 
   @override
   void dispose() {
-    // É crucial limpar a sessão de RA ao fechar o ecrã para não esgotar a bateria do telemóvel
     arSessionManager?.dispose();
     super.dispose();
   }
@@ -32,39 +39,29 @@ class _TelaARState extends State<TelaAR> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Visualizador RA'),
+        title: const Text('Marcador RA Inteligente'),
         backgroundColor: Colors.black87,
       ),
-      // Aqui usamos o Stack para colocar os nossos botões POR CIMA da câmara 3D
       body: Stack(
         children: [
           ARView(
             onARViewCreated: onARViewCreated,
-            planeDetectionConfig: PlaneDetectionConfig.horizontalAndVertical,
+            // Desligamos a deteção de chão porque só nos interessam as páginas
+            planeDetectionConfig: PlaneDetectionConfig.none,
           ),
           Align(
             alignment: FractionalOffset.bottomCenter,
             child: Padding(
               padding: const EdgeInsets.only(bottom: 30.0),
-              child: ElevatedButton(
-                onPressed: _adicionarOuRemoverObjeto,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blueAccent,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 16,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text(
-                  objeto3D == null ? 'Adicionar Objeto 3D' : 'Remover Objeto',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
+                child: const Text(
+                  "Aponte a câmara para uma página escaneada",
+                  style: TextStyle(color: Colors.white, fontSize: 16),
                 ),
               ),
             ),
@@ -82,46 +79,62 @@ class _TelaARState extends State<TelaAR> {
   ) {
     arSessionManager = sessionManager;
     arObjectManager = objectManager;
+    arAnchorManager = anchorManager;
 
-    // Inicializa o motor de RA.
-    // showPlanes: mostra pontinhos brancos no ecrã quando ele deteta uma superfície
+    // Inicializa o motor focado apenas em rastreio de imagem
     arSessionManager!.onInitialize(
       showFeaturePoints: false,
-      showPlanes: true,
-      customPlaneTexturePath: "Images/triangle.png",
+      showPlanes: false,
       showWorldOrigin: false,
-      handlePans: true,
-      handleRotation: true,
+      handlePans: false,
+      handleRotation: false,
     );
     arObjectManager!.onInitialize();
+
+    // Configura o ouvinte: o que fazer quando a câmara encontrar uma imagem?
+    arSessionManager!.onAugmentedImageAdd = _aoEncontrarPagina;
+
+    // Carrega a nossa galeria de fotografias para a memória do ARCore
+    _carregarImagensAlvo();
   }
 
-  Future<void> _adicionarOuRemoverObjeto() async {
-    if (objeto3D != null) {
-      // Se já existe um objeto, o botão serve para o remover da cena
-      arObjectManager!.removeNode(objeto3D!);
+  Future<void> _carregarImagensAlvo() async {
+    for (int i = 0; i < widget.imagensAlvo.length; i++) {
+      String caminhoFicheiro = widget.imagensAlvo[i];
+      String nomeAlvo = "pagina_$i"; // Dá um nome único a cada página
+
+      // Adiciona a imagem física ao motor de reconhecimento
+      await arSessionManager!.addAugmentedImage(nomeAlvo, caminhoFicheiro);
+      debugPrint("✅ Alvo registado na memória do ARCore: $nomeAlvo");
+    }
+  }
+
+  // Esta função é chamada automaticamente quando a câmara reconhece o livro
+  Future<void> _aoEncontrarPagina(ARAugmentedImage imagemReconhecida) async {
+    String nomePagina = imagemReconhecida.name;
+
+    // Se já colocámos o pato nesta página, não fazemos nada
+    if (objetosNasPaginas.containsKey(nomePagina)) return;
+
+    debugPrint("🔥 O ARCore encontrou a página: $nomePagina!");
+
+    // Cria uma âncora invisível "colada" exatamente no centro da imagem de papel
+    ARNode novoObjeto = ARNode(
+      type: NodeType.webGLB,
+      uri:
+          "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb",
+      scale: math.Vector3(0.1, 0.1, 0.1), // Um pouco menor para caber na página
+      position: math.Vector3(0.0, 0.0, 0.0), // Fica exatamente sobre a âncora
+      rotation: math.Vector4(1.0, 0.0, 0.0, 0.0),
+    );
+
+    // Adiciona o objeto associado a essa imagem detetada
+    bool? sucesso = await arObjectManager!.addNode(novoObjeto);
+
+    if (sucesso == true) {
       setState(() {
-        objeto3D = null;
+        objetosNasPaginas[nomePagina] = novoObjeto;
       });
-    } else {
-      // Se não existe, vamos descarregar um modelo 3D gratuito de teste diretamente da internet
-      var novoObjeto = ARNode(
-        type: NodeType.webGLB, // <--- O tipo correto agora é webGLB
-        // Link atualizado para baixar o arquivo .glb (binário) direto do repositório oficial
-        uri:
-            "https://github.com/KhronosGroup/glTF-Sample-Models/raw/master/2.0/Duck/glTF-Binary/Duck.glb",
-        scale: math.Vector3(0.2, 0.2, 0.2),
-        position: math.Vector3(0.0, 0.0, -1.0),
-        rotation: math.Vector4(1.0, 0.0, 0.0, 0.0),
-      );
-
-      bool? sucesso = await arObjectManager!.addNode(novoObjeto);
-
-      if (sucesso == true) {
-        setState(() {
-          objeto3D = novoObjeto;
-        });
-      }
     }
   }
 }

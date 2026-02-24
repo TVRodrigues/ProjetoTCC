@@ -19,7 +19,7 @@ class MeuMarcadorApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF121212),
         appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF1E1E1E)),
       ),
-      home: const TelaGaleria(),
+      home: const TelaPrincipal(),
     );
   }
 }
@@ -77,10 +77,12 @@ class _TelaGaleriaState extends State<TelaGaleria> {
 
   // Função que simula o envio dessas imagens para o algoritmo de RA (Target)
   void _salvarTargets() {
-    // Agora o botão verde navega diretamente para o nosso ambiente de Realidade Aumentada
+    // Enviamos a lista de _paginasEscaneadas para o ecrã de RA
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const TelaAR()),
+      MaterialPageRoute(
+        builder: (context) => TelaAR(imagensAlvo: _paginasEscaneadas),
+      ),
     );
   }
 

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-// Descomente as importações abaixo quando formos ligar os ecrãs
-// import 'tela_ar.dart';
-// import 'main.dart'; // Assumindo que a classe do seu scanner está aqui
+import 'tela_ar.dart';
+import 'main.dart'; // Assumindo que a classe do seu scanner está aqui
 
 class TelaPrincipal extends StatefulWidget {
   const TelaPrincipal({super.key});
@@ -110,19 +109,22 @@ class _TelaPrincipalState extends State<TelaPrincipal> {
                 onPressed: _estaAProcessar
                     ? null // Bloqueia o botão durante o processamento
                     : () async {
-                        // Passo 1: Navega para o ecrã do Scanner (ML Kit)
-                        // AQUI ENTRA A NAVEGAÇÃO PARA O SEU CÓDIGO EXISTENTE
-                        // await Navigator.push(context, MaterialPageRoute(builder: (context) => const SuaClasseDeScanner()));
+                        // Passo 1: Navega para a tela da Câmera que está no main.dart
+                        // NOTA: Se a sua classe lá no main.dart tiver outro nome, troque 'CameraTela' pelo nome correto
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const TelaGaleria(),
+                          ),
+                        );
 
-                        // Passo 2: Quando o utilizador voltar do scanner, iniciamos a simulação
+                        // Passo 2: O 'await' acima faz o app pausar aqui.
+                        // Quando você salva a foto e o scanner fecha (Navigator.pop),
+                        // ele volta para esta linha e inicia a simulação da nuvem automaticamente!
                         _simularProcessamentoNaNuvem();
                       },
                 icon: const Icon(Icons.document_scanner),
                 label: const Text('1. Escanear Nova Página'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  textStyle: const TextStyle(fontSize: 18),
-                ),
               ),
               const SizedBox(height: 16),
 
@@ -130,21 +132,17 @@ class _TelaPrincipalState extends State<TelaPrincipal> {
               ElevatedButton.icon(
                 onPressed: _raPronta
                     ? () {
-                        // Navega para o Ecrã de RA apenas quando estiver pronto
-                        // Navigator.push(context, MaterialPageRoute(builder: (context) => const TelaAR(imagensAlvo: [])));
+                        // Navega para o Ecrã de RA
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const TelaAR(),
+                          ),
+                        );
                       }
                     : null, // Fica cinzento e inativo se não estiver pronto
                 icon: const Icon(Icons.view_in_ar),
                 label: const Text('2. Abrir Visualizador RA'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepPurple,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  textStyle: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
               ),
             ],
           ),

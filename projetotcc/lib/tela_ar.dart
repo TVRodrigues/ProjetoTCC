@@ -1,21 +1,19 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:ar_flutter_plugin_plus/ar_flutter_plugin.dart';
 import 'package:ar_flutter_plugin_plus/datatypes/config_planedetection.dart';
 import 'package:ar_flutter_plugin_plus/datatypes/node_types.dart';
+import 'package:ar_flutter_plugin_plus/datatypes/hittest_result_types.dart';
 import 'package:ar_flutter_plugin_plus/managers/ar_anchor_manager.dart';
 import 'package:ar_flutter_plugin_plus/managers/ar_location_manager.dart';
 import 'package:ar_flutter_plugin_plus/managers/ar_object_manager.dart';
 import 'package:ar_flutter_plugin_plus/managers/ar_session_manager.dart';
 import 'package:ar_flutter_plugin_plus/models/ar_node.dart';
 import 'package:ar_flutter_plugin_plus/models/ar_anchor.dart';
+import 'package:ar_flutter_plugin_plus/models/ar_hittest_result.dart';
 import 'package:vector_math/vector_math_64.dart' as math;
 
 class TelaAR extends StatefulWidget {
-  // A lista de caminhos das imagens que vêm da galeria do main.dart
-  final List<String> imagensAlvo;
-
-  const TelaAR({super.key, required this.imagensAlvo});
+  const TelaAR({super.key});
 
   @override
   State<TelaAR> createState() => _TelaARState();
@@ -26,8 +24,8 @@ class _TelaARState extends State<TelaAR> {
   ARObjectManager? arObjectManager;
   ARAnchorManager? arAnchorManager;
 
-  // Guarda as âncoras para sabermos que páginas já têm o 3D por cima
-  Map<String, ARNode> objetosNasPaginas = {};
+  List<ARNode> nodes = [];
+  List<ARAnchor> anchors = [];
 
   @override
   void dispose() {
@@ -39,29 +37,30 @@ class _TelaARState extends State<TelaAR> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Marcador RA Inteligente'),
+        title: const Text('Marcador RA (Toque na Tela)'),
         backgroundColor: Colors.black87,
+        foregroundColor: Colors.white,
       ),
       body: Stack(
         children: [
           ARView(
             onARViewCreated: onARViewCreated,
-            // Desligamos a deteção de chão porque só nos interessam as páginas
-            planeDetectionConfig: PlaneDetectionConfig.none,
+            // Ligamos a deteção de planos (superfícies horizontais e verticais)
+            planeDetectionConfig: PlaneDetectionConfig.horizontalAndVertical,
           ),
           Align(
             alignment: FractionalOffset.bottomCenter,
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 30.0),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  "Aponte a câmara para uma página escaneada",
-                  style: TextStyle(color: Colors.white, fontSize: 16),
+            child: Container(
+              color: Colors.black54,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              margin: const EdgeInsets.only(bottom: 30),
+              child: const Text(
+                'Aponte para a página e toque nos pontos brancos para ancorar!',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
@@ -81,60 +80,62 @@ class _TelaARState extends State<TelaAR> {
     arObjectManager = objectManager;
     arAnchorManager = anchorManager;
 
-    // Inicializa o motor focado apenas em rastreio de imagem
+    // LIGANDO OS PONTOS E A MALHA PADRÃO
     arSessionManager!.onInitialize(
-      showFeaturePoints: false,
-      showPlanes: false,
+      showFeaturePoints: true, // <-- Mudamos para true (mostra os pontinhos)
+      showPlanes: true, // <-- Mantemos true (mostra as superfícies)
+      // Removemos a linha do customPlaneTexturePath para usar a malha padrão do ARCore
       showWorldOrigin: false,
-      handlePans: false,
-      handleRotation: false,
+      handlePans: true,
+      handleRotation: true,
     );
     arObjectManager!.onInitialize();
 
-    // Configura o ouvinte: o que fazer quando a câmara encontrar uma imagem?
-    arSessionManager!.onAugmentedImageAdd = _aoEncontrarPagina;
-
-    // Carrega a nossa galeria de fotografias para a memória do ARCore
-    _carregarImagensAlvo();
+    // Define o que acontece quando o utilizador toca no ecrã
+    arSessionManager!.onPlaneOrPointTap = onPlaneOrPointTapped;
   }
 
-  Future<void> _carregarImagensAlvo() async {
-    for (int i = 0; i < widget.imagensAlvo.length; i++) {
-      String caminhoFicheiro = widget.imagensAlvo[i];
-      String nomeAlvo = "pagina_$i"; // Dá um nome único a cada página
+  // Função disparada ao tocar na superfície
+  // Função disparada ao tocar na superfície
+  Future<void> onPlaneOrPointTapped(
+    List<ARHitTestResult> hitTestResults,
+  ) async {
+    // Medida de segurança: se o utilizador tocou mas não houve interseção, ignoramos
+    if (hitTestResults.isEmpty) return;
 
-      // Adiciona a imagem física ao motor de reconhecimento
-      await arSessionManager!.addAugmentedImage(nomeAlvo, caminhoFicheiro);
-      debugPrint("✅ Alvo registado na memória do ARCore: $nomeAlvo");
-    }
-  }
-
-  // Esta função é chamada automaticamente quando a câmara reconhece o livro
-  Future<void> _aoEncontrarPagina(ARAugmentedImage imagemReconhecida) async {
-    String nomePagina = imagemReconhecida.name;
-
-    // Se já colocámos o pato nesta página, não fazemos nada
-    if (objetosNasPaginas.containsKey(nomePagina)) return;
-
-    debugPrint("🔥 O ARCore encontrou a página: $nomePagina!");
-
-    // Cria uma âncora invisível "colada" exatamente no centro da imagem de papel
-    ARNode novoObjeto = ARNode(
-      type: NodeType.webGLB,
-      uri:
-          "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb",
-      scale: math.Vector3(0.1, 0.1, 0.1), // Um pouco menor para caber na página
-      position: math.Vector3(0.0, 0.0, 0.0), // Fica exatamente sobre a âncora
-      rotation: math.Vector4(1.0, 0.0, 0.0, 0.0),
+    // Procura se o utilizador tocou em cima de um plano válido detetado pelo telemóvel
+    var singleHitTestResult = hitTestResults.firstWhere(
+      (result) => result.type == ARHitTestResultType.plane,
+      orElse: () => hitTestResults.first,
     );
 
-    // Adiciona o objeto associado a essa imagem detetada
-    bool? sucesso = await arObjectManager!.addNode(novoObjeto);
+    // O Null Safety garante que temos um resultado válido, então criamos a âncora direto
+    var newAnchor = ARPlaneAnchor(
+      transformation: singleHitTestResult.worldTransform,
+    );
+    bool? didAddAnchor = await arAnchorManager!.addAnchor(newAnchor);
 
-    if (sucesso == true) {
-      setState(() {
-        objetosNasPaginas[nomePagina] = novoObjeto;
-      });
+    if (didAddAnchor == true) {
+      anchors.add(newAnchor);
+
+      // Prepara a nossa anotação 3D
+      var newNode = ARNode(
+        type: NodeType.webGLB,
+        uri:
+            "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb",
+        scale: math.Vector3(0.05, 0.05, 0.05),
+        position: math.Vector3(0.0, 0.0, 0.0),
+        rotation: math.Vector4(1.0, 0.0, 0.0, 0.0),
+      );
+
+      // Adiciona o nó 3D "grudado" na âncora
+      bool? didAddNodeToAnchor = await arObjectManager!.addNode(
+        newNode,
+        planeAnchor: newAnchor,
+      );
+      if (didAddNodeToAnchor == true) {
+        nodes.add(newNode);
+      }
     }
   }
 }

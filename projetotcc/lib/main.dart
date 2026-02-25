@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
-import 'tela_ar.dart';
+import 'tela_principal.dart';
 
 void main() {
   runApp(const MeuMarcadorApp());
@@ -19,7 +19,7 @@ class MeuMarcadorApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF121212),
         appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF1E1E1E)),
       ),
-      home: const TelaPrincipal(),
+      home: TelaPrincipal(),
     );
   }
 }
@@ -77,13 +77,9 @@ class _TelaGaleriaState extends State<TelaGaleria> {
 
   // Função que simula o envio dessas imagens para o algoritmo de RA (Target)
   void _salvarTargets() {
-    // Enviamos a lista de _paginasEscaneadas para o ecrã de RA
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => TelaAR(imagensAlvo: _paginasEscaneadas),
-      ),
-    );
+    // Agora o botão de salvar do Scanner apenas fecha a tela da câmera
+    // e volta para a Tela Principal (Hub Central)
+    Navigator.pop(context);
   }
 
   // Função para remover uma foto da galeria se o usuário não gostar

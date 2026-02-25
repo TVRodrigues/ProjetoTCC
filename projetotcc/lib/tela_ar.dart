@@ -122,7 +122,7 @@ class _TelaARState extends State<TelaAR> {
       var newNode = ARNode(
         type: NodeType.webGLB,
         uri:
-            "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb",
+            "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/main/2.0/Duck/glTF-Binary/Duck.glb", // <-- MUDOU AQUI PARA main
         scale: math.Vector3(0.05, 0.05, 0.05),
         position: math.Vector3(0.0, 0.0, 0.0),
         rotation: math.Vector4(1.0, 0.0, 0.0, 0.0),

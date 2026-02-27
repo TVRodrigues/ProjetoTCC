@@ -53,7 +53,16 @@ class _TelaARState extends State<TelaAR> {
     }
 
     if (!isSupported) {
-      debugPrint('Realidade Aumentada não suportada neste dispositivo.');
+      // Se não for suportado, avisamos o utilizador na tela em vez de tela preta!
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Serviço ARCore da Google desatualizado neste aparelho!',
+            ),
+          ),
+        );
+      }
       return;
     }
 
@@ -125,13 +134,15 @@ class _TelaARState extends State<TelaAR> {
               children: [
                 GestureDetector(
                   onTapUp: _aoTocarNaTela,
-                  child: AugenView(
-                    onViewCreated: _onARViewCreated,
-                    config: const ARSessionConfig(
-                      planeDetection: true,
-                      lightEstimation: true,
-                      depthData: false,
-                      autoFocus: true,
+                  child: SizedBox.expand(
+                    child: AugenView(
+                      onViewCreated: _onARViewCreated,
+                      config: const ARSessionConfig(
+                        planeDetection: true,
+                        lightEstimation: true,
+                        depthData: false,
+                        autoFocus: true,
+                      ),
                     ),
                   ),
                 ),

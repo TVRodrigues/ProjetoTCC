@@ -9,7 +9,7 @@ O **Marcador AR** (ProjetoTCC) é um aplicativo móvel multiplataforma desenvolv
 ## 2. Objetivo do Sistema
 
 - **Escaneamento de documentos**: Captura de páginas de livros via câmera com recorte automático
-- **Processamento de imagens**: Simulação de envio para backend para geração de targets de RA
+- **Processamento de imagens**: Análise local (ML Kit) e geração de targets de RA via Augen Image Tracking
 - **Visualização em RA**: Sobreposição de modelos 3D (anotações) sobre páginas físicas em tempo real
 
 ---
@@ -26,6 +26,9 @@ O **Marcador AR** (ProjetoTCC) é um aplicativo móvel multiplataforma desenvolv
 | **Câmera** | camera | ^0.11.4 | Acesso à câmera nativa |
 | **Permissões** | permission_handler | ^11.4.0 | Gerenciamento de permissões |
 | **HTTP** | http | ^1.6.0 | Comunicação com APIs (futuro) |
+| **Storage** | path_provider | ^2.1.x | Diretório privado da app (imagens) |
+| **Base de dados** | sqflite | ^2.3.x | SQLite local (metadados de scans) |
+| **UI** | shimmer | ^3.0.0 | Skeleton loader animado (feature 002) |
 
 ### Plataformas Suportadas
 
@@ -46,6 +49,7 @@ O projeto segue uma estrutura **monolítica em camada única** (tela única), co
 ├─────────────────────────────────────────────────────────────┤
 │  main.dart          │  TelaPrincipal  │  TelaGaleria  │  TelaAR  │
 │  (App + Galeria)    │  (Hub Central)  │  (Scanner)    │  (RA)    │
+│                     │  TelaListaPaginas │  TelaRescan  │         │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
@@ -59,16 +63,21 @@ O projeto segue uma estrutura **monolítica em camada única** (tela única), co
 | Componente | Arquivo | Responsabilidade |
 |------------|---------|------------------|
 | **MeuMarcadorApp** | main.dart | Configuração do MaterialApp, tema escuro, rota inicial |
-| **TelaPrincipal** | tela_principal.dart | Hub central com status do sistema e navegação |
-| **TelaGaleria** | main.dart | Scanner de documentos, galeria de páginas, geração de targets |
-| **TelaAR** | tela_ar.dart | Visualizador de RA, hit-test, colocação de modelos 3D |
+| **TelaPrincipal** | tela_principal.dart | Hub central com lista de livros e navegação |
+| **TelaListaPaginas** | tela_lista_paginas.dart | Lista de páginas do livro com indicadores (verde/amarelo/vermelho/roxo/cinzento) |
+| **TelaGaleria** | main.dart | Scanner de documentos, galeria de páginas |
+| **TelaRescan** | tela_rescan.dart | Scanner único para substituir página que falhou |
+| **TelaAR** | tela_ar.dart | Visualizador de RA com Image Tracking, ancoragem de modelos 3D |
 
-### 4.2 Camada de Serviços (Plugins)
+### 4.2 Camada de Serviços (Plugins e Serviços Locais)
 
 - **Document Scanner**: Captura e recorte de páginas (JPEG, até 20 páginas)
-- **Augen**: Sessão AR com detecção de planos, estimativa de luz, foco automático
-- **Permission Handler**: Solicitação de permissão de câmera
+- **Augen**: Sessão AR com Image Tracking, detecção de planos, estimativa de luz
+- **TargetPipelineService** (feature 003): Processamento em background de imagens, análise ML Kit, atualização de estado por página
+- **ImageAnalysisService** (feature 003): Análise de imagem (eh_pagina, numero_pagina, capa)
+- **Permission Handler**: Solicitação de permissão de câmera e storage
 - **Camera**: Acesso à câmera (usado indiretamente pelos plugins)
+- **ScanStorageService** (feature 001): Persistência de imagens (path_provider) e metadados (sqflite)
 
 ---
 
@@ -79,8 +88,16 @@ ProjetoTCC/
 ├── projetotcc/                    # Projeto Flutter principal
 │   ├── lib/                        # Código-fonte Dart
 │   │   ├── main.dart               # Entry point, App, TelaGaleria
-│   │   ├── tela_principal.dart     # Hub Central
-│   │   └── tela_ar.dart            # Tela de Realidade Aumentada
+│   │   ├── tela_principal.dart     # Hub Central (botão redondo FAB)
+│   │   ├── tela_ar.dart            # Tela de Realidade Aumentada
+│   │   ├── models/
+│   │   │   ├── scan.dart           # Modelo Scan (título, autor, resumo, imagens)
+│   │   │   └── imagem_page.dart    # Modelo ImagemPage (estado_target, numero_pagina)
+│   │   └── services/
+│   │       ├── scan_storage_service.dart   # Persistência de scans
+│   │       ├── scan_database.dart          # SQLite, CRUD, migration v2
+│   │       ├── target_pipeline_service.dart # Pipeline de targets AR
+│   │       └── image_analysis_service.dart # Análise de imagem (ML Kit)
 │   │
 │   ├── android/                    # Configuração Android
 │   │   ├── app/
@@ -109,31 +126,37 @@ ProjetoTCC/
 ```
                     ┌──────────────────┐
                     │   TelaPrincipal   │
-                    │  (Hub Central)    │
+                    │  (Lista Livros)   │
                     └────────┬─────────┘
-                             │
+                             │ tap livro
               ┌──────────────┼──────────────┐
-              │              │              │
-              ▼              │              ▼
-    ┌─────────────────┐      │      ┌─────────────┐
-    │  TelaGaleria    │      │      │   TelaAR    │
-    │  (Scanner)      │      │      │ (Visualizador│
-    │                 │      │      │     RA)     │
-    └────────┬────────┘      │      └─────────────┘
-             │               │
-             │  Navigator.pop │  (apenas quando
-             └───────────────┘   _raPronta = true)
+              │              ▼              │
+              │     ┌─────────────────┐    │
+              │     │ TelaListaPaginas│    │
+              │     │ (Páginas+cores) │    │
+              │     └────────┬─────────┘    │
+              │              │ tap verde    │ tap roxo
+              │              ▼              ▼
+              │     ┌─────────────┐  ┌─────────────┐
+              │     │   TelaAR    │  │  TelaRescan  │
+              │     │ (Image Track)│  │  (Scanner)  │
+              │     └─────────────┘  └─────────────┘
+              │
+              ▼
+    ┌─────────────────┐
+    │  TelaGaleria    │  FAB: escanear
+    │  (Scanner)      │
+    └─────────────────┘
 ```
 
 ### Fluxo de Uso
 
-1. **Início**: App abre em `TelaPrincipal`
-2. **Escanear**: Usuário toca em "1. Escanear Nova Página" → navega para `TelaGaleria`
-3. **Captura**: Em `TelaGaleria`, usa o Document Scanner para capturar até 20 páginas
-4. **Salvar**: Ao tocar em "GERAR TARGETS DE RA", retorna ao Hub (`Navigator.pop`)
-5. **Processamento**: `TelaPrincipal` simula processamento na nuvem (~4s)
-6. **RA**: Quando `_raPronta = true`, o botão "2. Abrir Visualizador RA" é habilitado
-7. **Visualização**: Usuário abre `TelaAR`, aponta para a página e toca para adicionar modelo 3D
+1. **Início**: App abre em `TelaPrincipal` (lista de livros)
+2. **Escanear**: FAB → navega para `TelaGaleria`; Document Scanner captura até 20 páginas
+3. **Salvar**: Ao tocar em "GERAR TARGETS DE RA", guarda scan e inicia `TargetPipelineService.processScan`
+4. **Lista de páginas**: Tap num livro → `TelaListaPaginas` (indicadores amarelo/verde/vermelho/roxo/cinzento)
+5. **RA**: Tap numa página verde → `TelaAR` com Image Tracking; aponta câmera para página física
+6. **Rescan**: Página roxa → `TelaRescan` (scanner único); ao capturar, substitui imagem e regressa
 
 ---
 
@@ -149,8 +172,8 @@ ProjetoTCC/
 
 ### Persistência
 
-- **Atual**: Nenhuma persistência. As imagens escaneadas existem apenas em memória durante a sessão.
-- **Futuro**: Possível integração com armazenamento local (path_provider, shared_preferences) ou backend.
+- **Feature 001**: Imagens em diretório privado (path_provider); metadados em SQLite (sqflite).
+- **Feature 003**: Migration v2 — tabela `imagens` estendida com `numero_pagina`, `eh_pagina`, `estado_target`, `qualidade_target`.
 
 ---
 
@@ -178,7 +201,7 @@ ProjetoTCC/
 | Permissão | Uso |
 |-----------|-----|
 | **Camera** | Document Scanner, Tela AR (Augen) |
-| **Storage** (futuro) | Salvamento de imagens escaneadas |
+| **Storage** | Salvamento de imagens escaneadas (feature 001; diretório privado) |
 
 ---
 
@@ -200,7 +223,8 @@ ProjetoTCC/
 │                         Marcador AR App                          │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │ TelaPrincipal│  │ TelaGaleria │  │   TelaAR    │              │
+│  │ TelaPrincipal│  │TelaListaPag.│  │   TelaAR    │              │
+│  │ TelaGaleria  │  │ TelaRescan  │  │ (Image Track)│              │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘              │
 │         │                 │                 │                     │
 │         └─────────────────┼─────────────────┘                     │

@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
-import 'tela_ar.dart';
-import 'main.dart'; // Assumindo que a classe do seu scanner está aqui
+import 'package:shimmer/shimmer.dart';
+import 'tela_lista_paginas.dart';
+import 'main.dart';
+import 'models/scan.dart';
+import 'services/scan_storage_service.dart';
+
+enum _LoadingPhase { count, skeleton, details, loaded, empty, error }
 
 class TelaPrincipal extends StatefulWidget {
   const TelaPrincipal({super.key});
@@ -10,34 +15,53 @@ class TelaPrincipal extends StatefulWidget {
 }
 
 class _TelaPrincipalState extends State<TelaPrincipal> {
-  // Gestão de estado da arquitetura
-  bool _estaAProcessar = false;
-  bool _raPronta = false;
+  final ScanStorageService _storage = ScanStorageService();
 
-  // Função que simula o envio das imagens para um servidor backend
-  Future<void> _simularProcessamentoNaNuvem() async {
+  int? _count;
+  List<Scan>? _scans;
+  _LoadingPhase _phase = _LoadingPhase.count;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _carregarLista();
+  }
+
+  Future<void> _carregarLista() async {
+    if (!mounted) return;
     setState(() {
-      _estaAProcessar = true;
-      _raPronta = false;
+      _phase = _LoadingPhase.count;
+      _count = null;
+      _scans = null;
+      _errorMessage = null;
     });
 
-    // O "Mágico de Oz": Simulamos 4 segundos de latência de rede e processamento
-    await Future.delayed(const Duration(seconds: 4));
+    try {
+      // Fase 1: quantidade
+      final count = await _storage.getScansCount();
+      if (!mounted) return;
+      setState(() {
+        _count = count;
+        _phase = count == 0 ? _LoadingPhase.empty : _LoadingPhase.skeleton;
+      });
 
-    setState(() {
-      _estaAProcessar = false;
-      _raPronta = true;
-    });
+      if (count == 0) return;
 
-    // Feedback visual de sucesso para o utilizador
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ Imagens processadas e transformadas em alvos RA!'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      // Fase 2: skeleton já visível (N placeholders)
+      // Fase 3: detalhes
+      final scans = await _storage.loadScans();
+      if (!mounted) return;
+      setState(() {
+        _scans = scans;
+        _phase = _LoadingPhase.loaded;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _phase = _LoadingPhase.error;
+        _errorMessage = 'Erro ao carregar. Reabra a app.';
+      });
     }
   }
 
@@ -45,106 +69,195 @@ class _TelaPrincipalState extends State<TelaPrincipal> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Marcador RA - Hub Central'),
+        title: const Text('Meus Livros'),
         backgroundColor: Colors.blueAccent,
         foregroundColor: Colors.white,
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // CARD DE STATUS DO SISTEMA
-              Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                color: _raPronta ? Colors.green.shade50 : Colors.grey.shade100,
-                child: Padding(
-                  padding: const EdgeInsets.all(32.0),
-                  child: Column(
-                    children: [
-                      Icon(
-                        _raPronta
-                            ? Icons.check_circle_outline
-                            : (_estaAProcessar
-                                  ? Icons.cloud_upload_outlined
-                                  : Icons.image_search),
-                        size: 72,
-                        color: _raPronta
-                            ? Colors.green
-                            : (_estaAProcessar ? Colors.blue : Colors.grey),
-                      ),
-                      const SizedBox(height: 24),
-                      Text(
-                        _raPronta
-                            ? "Realidade Aumentada Pronta!"
-                            : (_estaAProcessar
-                                  ? "A processar alvos na nuvem..."
-                                  : "A aguardar novas imagens..."),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: _raPronta
-                              ? Colors.green.shade700
-                              : Colors.black87,
-                        ),
-                      ),
-                      if (_estaAProcessar) ...[
-                        const SizedBox(height: 24),
-                        const CircularProgressIndicator(),
-                      ],
-                    ],
+      body: RefreshIndicator(
+        onRefresh: _carregarLista,
+        child: _buildBody(),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          final result = await Navigator.push<bool>(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const TelaGaleria(),
+            ),
+          );
+          if (result == true && mounted) {
+            _carregarLista();
+          }
+        },
+        tooltip: 'Escanear nova página',
+        backgroundColor: Colors.blueAccent,
+        child: const Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(Icons.menu_book, size: 28),
+            Positioned(
+              bottom: 4,
+              right: 4,
+              child: Icon(Icons.add_circle, size: 16, color: Colors.white),
+            ),
+          ],
+        ),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+    );
+  }
+
+  Widget _buildBody() {
+    switch (_phase) {
+      case _LoadingPhase.count:
+        return const Center(child: CircularProgressIndicator());
+      case _LoadingPhase.empty:
+        return _buildEmpty();
+      case _LoadingPhase.skeleton:
+      case _LoadingPhase.details:
+        return _buildSkeletonList();
+      case _LoadingPhase.loaded:
+        return _buildBookList();
+      case _LoadingPhase.error:
+        return _buildError();
+    }
+  }
+
+  Widget _buildEmpty() {
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height - 200,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Text(
+              'Nenhum livro guardado. Toque no botão + para escanear.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade400,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonList() {
+    final n = _count ?? 5;
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: n,
+      itemBuilder: (context, index) => _SkeletonItem(),
+    );
+  }
+
+  Widget _buildBookList() {
+    final scans = _scans ?? [];
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: scans.length,
+      itemBuilder: (context, index) {
+        final scan = scans[index];
+        return _BookListItem(
+          scan: scan,
+          onTap: () => _abrirLivro(scan),
+        );
+      },
+    );
+  }
+
+  Widget _buildError() {
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height - 200,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Text(
+              _errorMessage ?? 'Erro ao carregar. Reabra a app.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade400,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _abrirLivro(Scan scan) async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TelaListaPaginas(scan: scan),
+      ),
+    );
+    if (result == true && mounted) {
+      _carregarLista();
+    }
+  }
+}
+
+class _SkeletonItem extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Shimmer.fromColors(
+        baseColor: Colors.grey.shade800,
+        highlightColor: Colors.grey.shade600,
+        child: Container(
+          height: 56,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade800,
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BookListItem extends StatelessWidget {
+  final Scan scan;
+  final VoidCallback onTap;
+
+  const _BookListItem({required this.scan, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            child: Row(
+              children: [
+                const Icon(Icons.menu_book, color: Colors.blueAccent),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Text(
+                    scan.titulo,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 48),
-
-              // BOTÃO 1: ESCANEAR NOVO MARCADOR
-              ElevatedButton.icon(
-                onPressed: _estaAProcessar
-                    ? null // Bloqueia o botão durante o processamento
-                    : () async {
-                        // Passo 1: Navega para a tela da Câmera que está no main.dart
-                        // NOTA: Se a sua classe lá no main.dart tiver outro nome, troque 'CameraTela' pelo nome correto
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const TelaGaleria(),
-                          ),
-                        );
-
-                        // Passo 2: O 'await' acima faz o app pausar aqui.
-                        // Quando você salva a foto e o scanner fecha (Navigator.pop),
-                        // ele volta para esta linha e inicia a simulação da nuvem automaticamente!
-                        _simularProcessamentoNaNuvem();
-                      },
-                icon: const Icon(Icons.document_scanner),
-                label: const Text('1. Escanear Nova Página'),
-              ),
-              const SizedBox(height: 16),
-
-              // BOTÃO 2: ABRIR REALIDADE AUMENTADA
-              ElevatedButton.icon(
-                onPressed: _raPronta
-                    ? () {
-                        // Navega para o Ecrã de RA
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const TelaAR(),
-                          ),
-                        );
-                      }
-                    : null, // Fica cinzento e inativo se não estiver pronto
-                icon: const Icon(Icons.view_in_ar),
-                label: const Text('2. Abrir Visualizador RA'),
-              ),
-            ],
+                const Icon(Icons.chevron_right, color: Colors.grey),
+              ],
+            ),
           ),
         ),
       ),

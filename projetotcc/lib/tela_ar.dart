@@ -1,9 +1,17 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:augen/augen.dart';
-import 'package:permission_handler/permission_handler.dart'; // Pacote de permissões
+import 'package:permission_handler/permission_handler.dart';
+import 'models/scan.dart';
+import 'services/scan_storage_service.dart';
+import 'services/scan_database.dart';
 
 class TelaAR extends StatefulWidget {
-  const TelaAR({super.key});
+  final String? scanId;
+  final int? imagemId;
+
+  const TelaAR({super.key, this.scanId, this.imagemId});
 
   @override
   State<TelaAR> createState() => _TelaARState();
@@ -13,12 +21,64 @@ class _TelaARState extends State<TelaAR> {
   AugenController? _controller;
   bool _isARSupported = false;
   bool _temPermissaoCamera = false;
+  final Set<String> _nodesAncorados = {};
 
   @override
   void initState() {
     super.initState();
-    // Assim que a tela abre, pede permissão antes de fazer qualquer coisa
     _pedirPermissaoCamera();
+    if (widget.scanId != null) {
+      _verificarImagensDoScan();
+    }
+  }
+
+  Future<void> _verificarImagensDoScan() async {
+    final scanId = widget.scanId;
+    if (scanId == null) return;
+
+    try {
+      final storage = ScanStorageService();
+      final scans = await storage.loadScans();
+      Scan? scan;
+      for (final s in scans) {
+        if (s.id == scanId) {
+          scan = s;
+          break;
+        }
+      }
+      if (scan == null) return;
+
+      var todasExistem = true;
+      for (final p in scan.imagePaths) {
+        if (!await File(p).exists()) {
+          todasExistem = false;
+          break;
+        }
+      }
+
+      if (!todasExistem && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Imagens não encontradas. Livro removido da lista.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        await storage.deleteScan(scanId);
+        if (mounted) {
+          Navigator.pop(context, true);
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Erro ao carregar livro.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        Navigator.pop(context, true);
+      }
+    }
   }
 
   Future<void> _pedirPermissaoCamera() async {
@@ -74,6 +134,81 @@ class _TelaARState extends State<TelaAR> {
         autoFocus: true,
       ),
     );
+
+    if (widget.scanId != null) {
+      await _carregarImageTargets();
+    }
+  }
+
+  Future<void> _carregarImageTargets() async {
+    if (_controller == null || widget.scanId == null) return;
+    // Image Tracking só está implementado em Android/iOS; em Windows/emulador causa MissingPluginException
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    final imagens = await ScanDatabase.getImagensForScan(widget.scanId!);
+    final paginas = imagens
+        .where((i) =>
+            i.estadoTarget == 'sucesso' &&
+            i.ehPagina &&
+            File(i.caminho).existsSync())
+        .toList();
+    if (paginas.isEmpty) return;
+
+    try {
+      for (final img in paginas) {
+        try {
+          final target = ARImageTarget(
+            id: 'pagina_${img.id}',
+            name: 'Pagina ${img.numeroPagina ?? img.ordem}',
+            imagePath: img.caminho,
+            physicalSize: const ImageTargetSize(0.21, 0.297),
+          );
+          await _controller!.addImageTarget(target);
+        } catch (_) {}
+      }
+      await _controller!.setImageTrackingEnabled(true);
+      _controller!.trackedImagesStream.listen(_onTrackedImages);
+    } on MissingPluginException {
+      // Emulador ou plataforma sem implementação de Image Tracking; fallback para plane + hit test
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Image Tracking não disponível. Use toque na tela para colocar anotações em superfícies.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  void _onTrackedImages(List<ARTrackedImage> tracked) async {
+    if (_controller == null) return;
+    for (final t in tracked) {
+      if (t.isTracked && t.isReliable && !_nodesAncorados.contains(t.id)) {
+        _nodesAncorados.add(t.id);
+        try {
+          await _controller!.addNodeToTrackedImage(
+            nodeId: 'modelo_${t.id}',
+            trackedImageId: t.id,
+            node: ARNode(
+              id: 'modelo_${t.id}',
+              type: NodeType.model,
+              modelPath:
+                  'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
+              position: t.position,
+              rotation: t.rotation,
+              scale: const Vector3(0.05, 0.05, 0.05),
+            ),
+          );
+        } catch (_) {
+          _nodesAncorados.remove(t.id);
+        }
+      }
+      if (!t.isTracked) {
+        _nodesAncorados.remove(t.id);
+      }
+    }
   }
 
   Future<void> _aoTocarNaTela(TapUpDetails details) async {
@@ -114,7 +249,7 @@ class _TelaARState extends State<TelaAR> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Marcador RA'),
-        backgroundColor: Colors.black87,
+        backgroundColor: const Color(0xFF1E1E1E),
         foregroundColor: Colors.white,
       ),
       // Aqui está o "Pulo do Gato":

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
 import 'tela_lista_paginas.dart';
@@ -192,8 +194,34 @@ class _TelaPrincipalState extends State<TelaPrincipal> {
   }
 
   Future<void> _abrirLivro(Scan scan) async {
-    final result = await Navigator.push<bool>(
-      context,
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
+    // Spec 002: se as imagens do livro foram removidas do storage, remover livro e atualizar lista
+    var todasExistem = true;
+    for (final p in scan.imagePaths) {
+      if (!await File(p).exists()) {
+        todasExistem = false;
+        break;
+      }
+    }
+    if (!todasExistem) {
+      try {
+        await _storage.deleteScan(scan.id);
+      } catch (_) {}
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Imagens não encontradas. Livro removido da lista.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      _carregarLista();
+      return;
+    }
+
+    if (!mounted) return;
+    final result = await navigator.push<bool>(
       MaterialPageRoute(
         builder: (context) => TelaListaPaginas(scan: scan),
       ),

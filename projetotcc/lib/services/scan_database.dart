@@ -1,12 +1,14 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
+
+import '../models/anotacao_postit.dart';
 import '../models/imagem_page.dart';
 
 /// Inicialização e acesso à base de dados SQLite para scans e imagens.
 class ScanDatabase {
   static Database? _database;
   static const String _dbName = 'marcador_ar.db';
-  static const int _version = 2;
+  static const int _version = 3;
 
   static Future<Database> get database async {
     if (_database != null) return _database!;
@@ -59,6 +61,24 @@ class ScanDatabase {
     await db.execute(
       'CREATE INDEX idx_scans_data_criacao ON scans(data_criacao DESC)',
     );
+
+    await db.execute('''
+      CREATE TABLE anotacoes_postit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scan_id TEXT NOT NULL,
+        imagem_id INTEGER NOT NULL,
+        u REAL NOT NULL,
+        v REAL NOT NULL,
+        texto TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE CASCADE,
+        FOREIGN KEY (imagem_id) REFERENCES imagens(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX idx_anotacoes_scan_imagem ON anotacoes_postit(scan_id, imagem_id)',
+    );
   }
 
   static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -71,6 +91,26 @@ class ScanDatabase {
       await db.execute('ALTER TABLE imagens ADD COLUMN qualidade_target INTEGER');
       await db.execute(
         'CREATE INDEX idx_imagens_scan_ordem ON imagens(scan_id, ordem)',
+      );
+    }
+
+    if (oldVersion < 3) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS anotacoes_postit (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scan_id TEXT NOT NULL,
+          imagem_id INTEGER NOT NULL,
+          u REAL NOT NULL,
+          v REAL NOT NULL,
+          texto TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE CASCADE,
+          FOREIGN KEY (imagem_id) REFERENCES imagens(id) ON DELETE CASCADE
+        )
+      ''');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_anotacoes_scan_imagem ON anotacoes_postit(scan_id, imagem_id)',
       );
     }
   }
@@ -182,6 +222,39 @@ class ScanDatabase {
       values,
       where: 'id = ?',
       whereArgs: [imagemId],
+    );
+  }
+
+  /// Retorna todas as anotações (post-its) de uma imagem/página específica.
+  static Future<List<AnotacaoPostit>> getAnotacoesForImagem(
+    String scanId,
+    int imagemId,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      'anotacoes_postit',
+      where: 'scan_id = ? AND imagem_id = ?',
+      whereArgs: [scanId, imagemId],
+      orderBy: 'id ASC',
+    );
+    return rows.map(AnotacaoPostit.fromMap).toList();
+  }
+
+  /// Insere uma nova anotação (post-it) e devolve o id gerado.
+  static Future<int> insertAnotacao(AnotacaoPostit anotacao) async {
+    final db = await database;
+    return db.insert('anotacoes_postit', anotacao.toMap());
+  }
+
+  /// Atualiza uma anotação existente. Se o id for nulo, não faz nada.
+  static Future<void> updateAnotacao(AnotacaoPostit anotacao) async {
+    if (anotacao.id == null) return;
+    final db = await database;
+    await db.update(
+      'anotacoes_postit',
+      anotacao.toMap(),
+      where: 'id = ?',
+      whereArgs: [anotacao.id],
     );
   }
 

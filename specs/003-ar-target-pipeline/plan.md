@@ -1,35 +1,43 @@
-# Implementation Plan: Pipeline de Targets AR para Páginas Escaneadas
+# Implementation Plan: [FEATURE]
 
-**Branch**: `003-ar-target-pipeline` | **Date**: 2026-02-26 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `/specs/003-ar-target-pipeline/spec.md`
+**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
+**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+
+**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
 ## Summary
 
-Pipeline local para gerar targets AR a partir de páginas escaneadas. Após guardar um scan, o sistema processa imagens em background (análise ML Kit: eh_pagina, numero_pagina), atualiza estado por página (amarelo→verde/vermelho/roxo/cinzento), e usa Augen Image Tracking para reconhecimento em tempo real. FR-005 é satisfeito via ARCore/ARKit (imagem como referência; extração/matching internos). Nova tela de lista de páginas entre lista principal e tela RA; fluxo de rescan substitui imagem (ficheiro + path na BD) para páginas que falham após retry.
+[Extract from feature spec: primary requirement + technical approach from research]
 
 ## Technical Context
 
-**Language/Version**: Dart ^3.11.0  
-**Primary Dependencies**: Flutter SDK, augen ^1.0.2, google_mlkit_text_recognition ^0.15.1, sqflite ^2.3.0  
-**Storage**: SQLite (sqflite), path_provider (ficheiros locais)  
-**Testing**: flutter_test (recomendado para serviços críticos; não obrigatório para protótipo)  
-**Target Platform**: Android (minSdk 24, targetSdk 36), iOS 13+, Windows  
-**Project Type**: mobile  
-**Performance Goals**: Reconhecimento AR em <3s (SC-001), 80% targets utilizáveis (SC-002)  
-**Constraints**: Offline-capable, processamento local, sem backend  
-**Scale/Scope**: ~5–10 telas, livros com até 20 páginas por scan  
+<!--
+  ACTION REQUIRED: Replace the content in this section with the technical details
+  for the project. The structure here is presented in advisory capacity to guide
+  the iteration process.
+-->
+
+**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
+**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
+**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
+**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
+**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
+**Project Type**: [single/web/mobile - determines source structure]  
+**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
+**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
+**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
 ## Constitution Check
 
-*GATE: Passed. Re-verified after Phase 1 design.*
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| **I. Documentation-First** | ✅ | ARQUITETURA.md será atualizado com nova tela, serviços TargetPipeline/ImageAnalysis, migração DB |
-| **II. Presentation + Services** | ✅ | TelaListaPaginas, TelaRescan = apresentação; TargetPipelineService, ImageAnalysisService = serviços |
-| **III. Flutter Stack** | ✅ | Sem novas dependências; augen e ML Kit já no projeto |
-| **IV. Simplicity** | ✅ | Sem Provider/Riverpod; Stream local; processamento local (sem backend) |
-| **V. Permissions & Privacy** | ✅ | Câmera na TelaAR e TelaRescan; verificação antes de iniciar; falha graciosa |
+Verify compliance with `.specify/memory/constitution.md`:
+
+- **I. Documentation-First**: Architecture/stack changes reflected in `docs/ARQUITETURA.md`
+- **II. Presentation + Services**: New logic fits presentation or services layer; domain extraction justified if needed
+- **III. Flutter Stack**: Dependencies align with Flutter/Dart stack; new deps documented
+- **IV. Simplicity**: No premature complexity; YAGNI applied
+- **V. Permissions & Privacy**: Camera/storage requested at point of use; graceful failure handling
 
 ## Project Structure
 
@@ -46,30 +54,57 @@ specs/[###-feature]/
 ```
 
 ### Source Code (repository root)
+<!--
+  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
+  for this feature. Delete unused options and expand the chosen structure with
+  real paths (e.g., apps/admin, packages/something). The delivered plan must
+  not include Option labels.
+-->
 
 ```text
-projetotcc/
-├── lib/
-│   ├── main.dart
-│   ├── tela_principal.dart      # alterar: tap livro → TelaListaPaginas
-│   ├── tela_lista_paginas.dart # novo
-│   ├── tela_ar.dart            # alterar: Image Tracking
-│   ├── tela_rescan.dart        # novo (ou modo em TelaGaleria)
+# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
+src/
+├── models/
+├── services/
+├── cli/
+└── lib/
+
+tests/
+├── contract/
+├── integration/
+└── unit/
+
+# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
+backend/
+├── src/
 │   ├── models/
-│   │   ├── scan.dart
-│   │   └── imagem_page.dart    # novo
+│   ├── services/
+│   └── api/
+└── tests/
+
+frontend/
+├── src/
+│   ├── components/
+│   ├── pages/
 │   └── services/
-│       ├── scan_storage_service.dart
-│       ├── scan_database.dart   # migration v2
-│       ├── target_pipeline_service.dart  # novo
-│       └── image_analysis_service.dart   # novo
-├── android/
-├── ios/
-└── pubspec.yaml
+└── tests/
+
+# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
+api/
+└── [same as backend above]
+
+ios/ or android/
+└── [platform-specific structure: feature modules, UI flows, platform tests]
 ```
 
-**Structure Decision**: Projeto Flutter monolítico (Option 3: mobile). Código em `projetotcc/lib/`. Nenhum backend; processamento local.
+**Structure Decision**: [Document the selected structure and reference the real
+directories captured above]
 
 ## Complexity Tracking
 
-Nenhuma violação. Secção vazia.
+> **Fill ONLY if Constitution Check has violations that must be justified**
+
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
+| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |

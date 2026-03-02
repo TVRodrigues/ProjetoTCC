@@ -4,8 +4,11 @@ import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart
 import 'tela_principal.dart';
 import 'services/scan_storage_service.dart';
 import 'services/target_pipeline_service.dart';
+import 'services/seed_database_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SeedDatabaseService.seedSeNecessario();
   runApp(const MeuMarcadorApp());
 }
 

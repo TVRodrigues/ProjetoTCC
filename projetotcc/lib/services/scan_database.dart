@@ -75,6 +75,19 @@ class ScanDatabase {
     }
   }
 
+  /// Verifica se um scan com o id dado existe.
+  static Future<bool> scanExists(String id) async {
+    final db = await database;
+    final r = await db.query(
+      'scans',
+      columns: ['id'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return r.isNotEmpty;
+  }
+
   /// Retorna o número total de scans na base de dados.
   /// Usado na fase 1 do carregamento da lista (FR-007: ordenação por data_criacao).
   static Future<int> getScansCount() async {

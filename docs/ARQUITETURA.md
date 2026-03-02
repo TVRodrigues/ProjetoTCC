@@ -9,8 +9,8 @@ O **Marcador AR** (ProjetoTCC) é um aplicativo móvel multiplataforma desenvolv
 ## 2. Objetivo do Sistema
 
 - **Escaneamento de documentos**: Captura de páginas de livros via câmera com recorte automático
-- **Processamento de imagens**: Análise local (ML Kit) e geração de targets de RA via Augen Image Tracking
-- **Visualização em RA**: Sobreposição de modelos 3D (anotações) sobre páginas físicas em tempo real
+- **Processamento de imagens**: Análise local (ML Kit) e geração de targets de RA (feature 003)
+- **Visualização em RA**: Reconhecimento de páginas com OpenCV (ORB, homografia) e overlay sobre páginas físicas em tempo real (apenas Android e iOS)
 
 ---
 
@@ -22,8 +22,8 @@ O **Marcador AR** (ProjetoTCC) é um aplicativo móvel multiplataforma desenvolv
 | **Linguagem** | Dart | ^3.11.0 | Lógica de negócio e UI |
 | **Escaneamento** | google_mlkit_document_scanner | ^0.4.1 | Captura e recorte de documentos |
 | **OCR** | google_mlkit_text_recognition | ^0.15.1 | Reconhecimento de texto (disponível) |
-| **RA** | augen | ^1.0.2 | Motor de Realidade Aumentada |
-| **Câmera** | camera | ^0.11.4 | Acesso à câmera nativa |
+| **RA** | opencv_dart | ^2.2.1 | Detecção de características, matching e homografia (ORB, findHomography) |
+| **Câmera** | camera | ^0.11.4 | Preview e stream de frames para RA |
 | **Permissões** | permission_handler | ^11.4.0 | Gerenciamento de permissões |
 | **HTTP** | http | ^1.6.0 | Comunicação com APIs (futuro) |
 | **Storage** | path_provider | ^2.1.x | Diretório privado da app (imagens) |
@@ -32,9 +32,9 @@ O **Marcador AR** (ProjetoTCC) é um aplicativo móvel multiplataforma desenvolv
 
 ### Plataformas Suportadas
 
-- **Android**: minSdk 24, targetSdk 36, compileSdk 36
-- **iOS**: Suportado (estrutura padrão Flutter)
-- **Windows**: Suportado (estrutura padrão Flutter)
+- **Android**: minSdk 24, targetSdk 36, compileSdk 36; **tela de RA suportada**
+- **iOS**: Suportado; **tela de RA suportada**
+- **Windows**: Suportado para o resto da app; **tela de RA não suportada** (mensagem ao utilizador)
 
 ---
 
@@ -54,7 +54,7 @@ O projeto segue uma estrutura **monolítica em camada única** (tela única), co
                               │
 ┌─────────────────────────────────────────────────────────────┐
 │                    CAMADA DE SERVIÇOS                        │
-│  (Plugins nativos - ML Kit, Augen, Camera, Permissões)        │
+│  (Plugins nativos - ML Kit, OpenCV, Camera, Permissões)      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,16 +67,16 @@ O projeto segue uma estrutura **monolítica em camada única** (tela única), co
 | **TelaListaPaginas** | tela_lista_paginas.dart | Lista de páginas do livro com indicadores (verde/amarelo/vermelho/roxo/cinzento) |
 | **TelaGaleria** | main.dart | Scanner de documentos, galeria de páginas |
 | **TelaRescan** | tela_rescan.dart | Scanner único para substituir página que falhou |
-| **TelaAR** | tela_ar.dart | Visualizador de RA com Image Tracking, ancoragem de modelos 3D |
+| **TelaAR** | tela_ar.dart | Visualizador de RA com OpenCV (reconhecimento de página + overlay), ancoragem de anotações (Android/iOS) |
 
 ### 4.2 Camada de Serviços (Plugins e Serviços Locais)
 
 - **Document Scanner**: Captura e recorte de páginas (JPEG, até 20 páginas)
-- **Augen**: Sessão AR com Image Tracking, detecção de planos, estimativa de luz
+- **ArOpencvService** (feature 004): Carrega subconjunto de imagens-alvo (estado_target=sucesso), extrai ORB, faz matching e homografia no frame da câmera; devolve cantos para overlay
 - **TargetPipelineService** (feature 003): Processamento em background de imagens, análise ML Kit, atualização de estado por página
 - **ImageAnalysisService** (feature 003): Análise de imagem (eh_pagina, numero_pagina, capa)
 - **Permission Handler**: Solicitação de permissão de câmera e storage
-- **Camera**: Acesso à câmera (usado indiretamente pelos plugins)
+- **Camera**: Preview e stream de imagens para TelaAR (conversão para OpenCV via utils/camera_image_to_mat)
 - **ScanStorageService** (feature 001): Persistência de imagens (path_provider) e metadados (sqflite)
 
 ---
@@ -93,11 +93,14 @@ ProjetoTCC/
 │   │   ├── models/
 │   │   │   ├── scan.dart           # Modelo Scan (título, autor, resumo, imagens)
 │   │   │   └── imagem_page.dart    # Modelo ImagemPage (estado_target, numero_pagina)
-│   │   └── services/
-│   │       ├── scan_storage_service.dart   # Persistência de scans
-│   │       ├── scan_database.dart          # SQLite, CRUD, migration v2
-│   │       ├── target_pipeline_service.dart # Pipeline de targets AR
-│   │       └── image_analysis_service.dart # Análise de imagem (ML Kit)
+│   │   ├── services/
+│   │   │   ├── scan_storage_service.dart   # Persistência de scans
+│   │   │   ├── scan_database.dart          # SQLite, CRUD, migration v2
+│   │   │   ├── target_pipeline_service.dart # Pipeline de targets AR
+│   │   │   ├── image_analysis_service.dart # Análise de imagem (ML Kit)
+│   │   │   └── ar_opencv_service.dart      # RA com OpenCV (targets, matching, homografia)
+│   │   └── utils/
+│   │       └── camera_image_to_mat.dart   # Conversão CameraImage → Mat (BGR) para OpenCV
 │   │
 │   ├── android/                    # Configuração Android
 │   │   ├── app/
@@ -168,7 +171,7 @@ ProjetoTCC/
 |------|---------------------|-----------|
 | **TelaPrincipal** | `_estaAProcessar`, `_raPronta` | Controla fluxo e habilitação do botão RA |
 | **TelaGaleria** | `_paginasEscaneadas`, `_processando` | Lista de imagens (paths) e estado do scanner |
-| **TelaAR** | `_controller`, `_isARSupported`, `_temPermissaoCamera` | Controller Augen, suporte AR, permissões |
+| **TelaAR** | `_cameraController`, `_arService`, `_matchAtual`, `_temPermissaoCamera` | Câmera, ArOpencvService, resultado de match, permissões |
 
 ### Persistência
 
@@ -200,7 +203,7 @@ ProjetoTCC/
 
 | Permissão | Uso |
 |-----------|-----|
-| **Camera** | Document Scanner, Tela AR (Augen) |
+| **Camera** | Document Scanner, Tela AR (preview e stream para OpenCV) |
 | **Storage** | Salvamento de imagens escaneadas (feature 001; diretório privado) |
 
 ---
@@ -231,7 +234,7 @@ ProjetoTCC/
 │                           │                                       │
 │  ┌────────────────────────┼────────────────────────┐             │
 │  │  Plugins / Serviços    │                        │             │
-│  │  • Document Scanner    │  • Augen (AR)          │             │
+│  │  • Document Scanner    │  • OpenCV / ArOpencvService (AR) │             │
 │  │  • Permission Handler │  • Camera               │             │
 │  └─────────────────────────────────────────────────┘             │
 └─────────────────────────────────────────────────────────────────┘
@@ -239,4 +242,4 @@ ProjetoTCC/
 
 ---
 
-*Documento gerado com base na análise do código-fonte do projeto. Última atualização: Fevereiro 2026.*
+*Documento gerado com base na análise do código-fonte do projeto. Última atualização: Fevereiro 2026. Feature 004: RA baseada em OpenCV (opencv_dart), apenas Android/iOS.*

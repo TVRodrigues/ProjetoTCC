@@ -67,21 +67,29 @@ class ArOpencvService {
   }
 
   /// Inicializa os targets: carrega imagens e extrai keypoints/descritores ORB.
-  /// Deve ser chamado antes de [matchFrame].
+  /// Usa bytes do ficheiro + imdecode (em vez de imread) para funcionar em Android.
   Future<void> init() async {
     if (_orb == null || _matcher == null) return;
     for (final path in _targetPaths) {
       try {
-        final img = cv.imread(path, flags: cv.IMREAD_GRAYSCALE);
-        if (img.isEmpty) {
-          img.dispose();
+        final file = File(path);
+        if (!await file.exists()) continue;
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty) continue;
+        final imgColor = cv.imdecode(bytes, cv.IMREAD_COLOR);
+        if (imgColor.isEmpty) {
+          imgColor.dispose();
           continue;
         }
+        final img = cv.cvtColor(imgColor, cv.COLOR_BGR2GRAY);
+        final w = img.cols;
+        final h = img.rows;
+        imgColor.dispose();
         final mask = cv.Mat.empty();
         final (kp, desc) = _orb!.detectAndCompute(img, mask);
         mask.dispose();
+        img.dispose();
         if (kp.length < _minMatchesHomography || desc.isEmpty) {
-          img.dispose();
           kp.dispose();
           desc.dispose();
           continue;
@@ -90,10 +98,9 @@ class ArOpencvService {
           path: path,
           keypoints: kp,
           descriptors: desc,
-          width: img.cols,
-          height: img.rows,
+          width: w,
+          height: h,
         ));
-        img.dispose();
       } catch (_) {
         // ignorar target que não carregou
       }

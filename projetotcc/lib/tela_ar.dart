@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 import 'services/ar_opencv_service.dart';
 import 'utils/camera_image_to_mat.dart';
@@ -30,7 +31,6 @@ class _TelaARState extends State<TelaAR> {
   CameraController? _cameraController;
   ArOpencvService? _arService;
   ArMatchResult? _matchAtual;
-  StreamSubscription<CameraImage>? _imageSubscription;
   Timer? _timerDica;
   List<CameraDescription>? _cameras;
 
@@ -148,11 +148,18 @@ class _TelaARState extends State<TelaAR> {
   void _iniciarStream() {
     _cameraController?.startImageStream((CameraImage image) {
       if (_arService == null || !mounted) return;
-      final mat = cameraImageToMat(image);
-      if (mat == null) return;
+      
+      // 1. Converte a imagem da câmera
+      final matRaw = cameraImageToMat(image);
+      if (matRaw == null) return;
+      
       try {
+        // 2. CORREÇÃO: Rotaciona a imagem 90 graus para retrato (Portrait)
+        final mat = cv.rotate(matRaw, cv.ROTATE_90_CLOCKWISE);
+        
+        // 3. Processa a imagem rotacionada
         final result = _arService!.matchFrame(mat);
-        mat.dispose();
+        
         if (!mounted) return;
         setState(() {
           _matchAtual = result;
@@ -164,8 +171,8 @@ class _TelaARState extends State<TelaAR> {
             });
           }
         });
-      } catch (_) {
-        mat.dispose();
+      } catch (e) {
+        debugPrint('Erro no loop da câmera: $e');
       }
     });
   }
@@ -195,7 +202,6 @@ class _TelaARState extends State<TelaAR> {
   @override
   void dispose() {
     _timerDica?.cancel();
-    _imageSubscription?.cancel();
     _cameraController?.stopImageStream();
     _cameraController?.dispose();
     _arService?.dispose();
@@ -382,11 +388,12 @@ class _OverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (previewSize.width <= 0 || previewSize.height <= 0) return;
-    final scaleW = layoutSize.width / previewSize.width;
-    final scaleH = layoutSize.height / previewSize.height;
+    final previewPortraitSize = Size(previewSize.height, previewSize.width);
+    final scaleW = layoutSize.width / previewPortraitSize.width;
+    final scaleH = layoutSize.height / previewPortraitSize.height;
     final scale = scaleW < scaleH ? scaleW : scaleH;
-    final offsetX = (layoutSize.width - previewSize.width * scale) / 2;
-    final offsetY = (layoutSize.height - previewSize.height * scale) / 2;
+    final offsetX = (layoutSize.width - previewPortraitSize.width * scale) / 2;
+    final offsetY = (layoutSize.height - previewPortraitSize.height * scale) / 2;
     final paint = Paint()
       ..color = Colors.green.withValues(alpha: 0.8)
       ..style = PaintingStyle.stroke

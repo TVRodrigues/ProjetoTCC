@@ -1,24 +1,17 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 import '../models/imagem_page.dart';
 import 'scan_database.dart';
 
-/// Resultado de um match AR: identificador do target e cantos no frame para overlay.
 class ArMatchResult {
-  /// Identificador do target (caminho do ficheiro da imagem).
   final String targetId;
-
-  /// Cantos do retângulo no frame da câmera (ordem: topLeft, topRight, bottomRight, bottomLeft).
   final List<Offset> corners;
 
   const ArMatchResult({required this.targetId, required this.corners});
 }
 
-/// Serviço de RA baseado em OpenCV: carrega imagens-alvo, extrai descritores ORB
-/// e faz matching em frames da câmera, devolvendo homografia para overlay.
 class ArOpencvService {
   ArOpencvService(this._targetPaths) {
     if (_targetPaths.isEmpty) return;
@@ -30,16 +23,11 @@ class ArOpencvService {
   cv.ORB? _orb;
   cv.BFMatcher? _matcher;
 
-  /// Por target: (caminho, keypoints, descriptors, width, height).
   final List<_TargetData> _targets = [];
 
   static const int _minMatchesHomography = 10;
   static const double _ratioThreshold = 0.75;
 
-  /// Devolve os caminhos das imagens a usar como targets na sessão AR.
-  /// Filtra por estado_target == 'sucesso', eh_pagina == true e ficheiro existe.
-  /// Se [imagemId] for passado: essa imagem + 3 antes e 3 depois (máx. 10).
-  /// Caso contrário: primeiras 5 (máx. 10).
   static Future<List<String>> getTargetPathsForSession(
     String scanId, {
     int? imagemId,
@@ -66,67 +54,60 @@ class ArOpencvService {
     return subconjunto.take(10).map((e) => e.caminho).toList();
   }
 
-  /// Inicializa os targets: carrega imagens e extrai keypoints/descritores ORB.
-  /// Usa bytes do ficheiro + imdecode (em vez de imread) para funcionar em Android.
   Future<void> init() async {
     if (_orb == null || _matcher == null) return;
     for (final path in _targetPaths) {
       try {
         final file = File(path);
         if (!await file.exists()) continue;
-        final bytes = await file.readAsBytes();
-        if (bytes.isEmpty) continue;
-        final imgColor = cv.imdecode(bytes, cv.IMREAD_COLOR);
-        if (imgColor.isEmpty) {
-          imgColor.dispose();
-          continue;
-        }
-        final img = cv.cvtColor(imgColor, cv.COLOR_BGR2GRAY);
-        final w = img.cols;
-        final h = img.rows;
-        imgColor.dispose();
+
+        // Usa imread nativo (agora que o pubspec foi corrigido)
+        final imgColor = cv.imread(path, flags: cv.IMREAD_COLOR);
+        if (imgColor.isEmpty) continue;
+
+        // Redimensiona para evitar lentidão e OutOfMemory (OOM)
+        final novaLargura = 800;
+        final novaAltura = (novaLargura * imgColor.rows / imgColor.cols).toInt();
+        final imgResized = cv.resize(imgColor, (novaLargura, novaAltura));
+        
+        final img = cv.cvtColor(imgResized, cv.COLOR_BGR2GRAY);
+        
         final mask = cv.Mat.empty();
         final (kp, desc) = _orb!.detectAndCompute(img, mask);
-        mask.dispose();
-        img.dispose();
+
         if (kp.length < _minMatchesHomography || desc.isEmpty) {
-          kp.dispose();
-          desc.dispose();
           continue;
         }
+
         _targets.add(_TargetData(
           path: path,
           keypoints: kp,
           descriptors: desc,
-          width: w,
-          height: h,
+          width: img.cols, // Usa dimensões da imagem cinza já redimensionada
+          height: img.rows,
         ));
-      } catch (_) {
-        // ignorar target que não carregou
+      } catch (e) {
+        debugPrint('Erro ao processar target $path: $e');
       }
     }
   }
 
-  /// Procura um target no frame. Retorna o primeiro match válido com homografia.
-  /// [frameBgr] deve ser Mat BGR (3 canais) da câmera.
   ArMatchResult? matchFrame(cv.Mat frameBgr) {
     if (_orb == null || _matcher == null || _targets.isEmpty) return null;
     if (frameBgr.isEmpty) return null;
 
-    cv.Mat? gray;
     try {
+      cv.Mat gray;
       if (frameBgr.channels == 3) {
         gray = cv.cvtColor(frameBgr, cv.COLOR_BGR2GRAY);
       } else {
         gray = frameBgr.clone();
       }
+      
       final mask = cv.Mat.empty();
       final (frameKp, frameDesc) = _orb!.detectAndCompute(gray, mask);
-      mask.dispose();
-      gray.dispose();
+      
       if (frameKp.length < _minMatchesHomography || frameDesc.isEmpty) {
-        frameKp.dispose();
-        frameDesc.dispose();
         return null;
       }
 
@@ -137,16 +118,11 @@ class ArOpencvService {
           target: t,
         );
         if (result != null) {
-          frameKp.dispose();
-          frameDesc.dispose();
           return result;
         }
       }
-      frameKp.dispose();
-      frameDesc.dispose();
-    } catch (_) {
-      gray?.dispose();
-    }
+    } catch (_) {}
+    
     return null;
   }
 
@@ -165,7 +141,7 @@ class ArOpencvService {
         final n = row[1];
         if (m.distance < _ratioThreshold * n.distance) good.add(m);
       }
-      knn.dispose();
+      
       if (good.length < _minMatchesHomography) return null;
 
       final trainPts = cv.VecPoint2f();
@@ -180,23 +156,18 @@ class ArOpencvService {
           frameKp[m.queryIdx].y,
         ));
       }
+      
       final srcMat = cv.Mat.fromVec(trainPts);
       final dstMat = cv.Mat.fromVec(queryPts);
-      trainPts.dispose();
-      queryPts.dispose();
-
+      
       final H = cv.findHomography(
         srcMat,
         dstMat,
         method: 0,
         ransacReprojThreshold: 5,
       );
-      srcMat.dispose();
-      dstMat.dispose();
-      if (H.isEmpty) {
-        H.dispose();
-        return null;
-      }
+      
+      if (H.isEmpty) return null;
 
       final cornersTarget = cv.VecPoint2f.fromList([
         cv.Point2f(0, 0),
@@ -204,19 +175,15 @@ class ArOpencvService {
         cv.Point2f(target.width.toDouble(), target.height.toDouble()),
         cv.Point2f(0, target.height.toDouble()),
       ]);
+      
       final cornersMat = cv.Mat.fromVec(cornersTarget);
       final sceneCorners = cv.perspectiveTransform(cornersMat, H);
-      cornersTarget.dispose();
-      cornersMat.dispose();
-      H.dispose();
-
       final cornersVec = cv.VecPoint2f.fromMat(sceneCorners);
+      
       final corners = List.generate(
         cornersVec.length,
         (i) => Offset(cornersVec[i].x, cornersVec[i].y),
       );
-      cornersVec.dispose();
-      sceneCorners.dispose();
 
       return ArMatchResult(targetId: target.path, corners: corners);
     } catch (_) {
@@ -225,14 +192,9 @@ class ArOpencvService {
   }
 
   void dispose() {
-    for (final t in _targets) {
-      t.keypoints.dispose();
-      t.descriptors.dispose();
-    }
+    // Deixa o Garbage Collector limpar a memória nativa
     _targets.clear();
-    _orb?.dispose();
     _orb = null;
-    _matcher?.dispose();
     _matcher = null;
   }
 

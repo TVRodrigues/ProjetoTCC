@@ -25,7 +25,6 @@ O **Marcador AR** (ProjetoTCC) é um aplicativo móvel multiplataforma desenvolv
 | **RA** | opencv_dart | ^2.2.1 | Detecção de características, matching e homografia (ORB, findHomography) |
 | **Câmera** | camera | ^0.11.4 | Preview e stream de frames para RA |
 | **Permissões** | permission_handler | ^11.4.0 | Gerenciamento de permissões |
-| **HTTP** | http | ^1.6.0 | Comunicação com APIs (futuro) |
 | **Storage** | path_provider | ^2.1.x | Diretório privado da app (imagens) |
 | **Base de dados** | sqflite | ^2.3.x | SQLite local (metadados de scans) |
 | **UI** | shimmer | ^3.0.0 | Skeleton loader animado (feature 002) |
@@ -78,6 +77,7 @@ O projeto segue uma estrutura **monolítica em camada única** (tela única), co
 - **Permission Handler**: Solicitação de permissão de câmera e storage
 - **Camera**: Preview e stream de imagens para TelaAR (conversão para OpenCV via utils/camera_image_to_mat)
 - **ScanStorageService** (feature 001): Persistência de imagens (path_provider) e metadados (sqflite)
+- **SeedDatabaseService**: Inserção opcional de livro demo em modo debug (chamado em main())
 
 ---
 
@@ -98,7 +98,8 @@ ProjetoTCC/
 │   │   │   ├── scan_database.dart          # SQLite, CRUD, migration v2
 │   │   │   ├── target_pipeline_service.dart # Pipeline de targets AR
 │   │   │   ├── image_analysis_service.dart # Análise de imagem (ML Kit)
-│   │   │   └── ar_opencv_service.dart      # RA com OpenCV (targets, matching, homografia)
+│   │   │   ├── ar_opencv_service.dart      # RA com OpenCV (targets, matching, homografia)
+│   │   │   └── seed_database_service.dart  # Seed opcional (livro demo em debug)
 │   │   └── utils/
 │   │       └── camera_image_to_mat.dart   # Conversão CameraImage → Mat (BGR) para OpenCV
 │   │
@@ -169,7 +170,7 @@ ProjetoTCC/
 
 | Tela | Variáveis de Estado | Descrição |
 |------|---------------------|-----------|
-| **TelaPrincipal** | `_estaAProcessar`, `_raPronta` | Controla fluxo e habilitação do botão RA |
+| **TelaPrincipal** | `_count`, `_scans`, `_phase`, `_errorMessage` | Fases de carregamento (count/skeleton/details), lista de livros, mensagem de erro |
 | **TelaGaleria** | `_paginasEscaneadas`, `_processando` | Lista de imagens (paths) e estado do scanner |
 | **TelaAR** | `_cameraController`, `_arService`, `_matchAtual`, `_temPermissaoCamera` | Câmera, ArOpencvService, resultado de match, permissões |
 
@@ -210,8 +211,8 @@ ProjetoTCC/
 
 ## 10. Pontos de Extensão e Melhorias Futuras
 
-1. **Backend real**: Substituir `_simularProcessamentoNaNuvem()` por chamada HTTP a API de geração de targets
-2. **Persistência**: Salvar páginas escaneadas e targets entre sessões
+1. **Backend real**: Caso se adote API remota, adicionar dependência http e chamadas à API
+2. **Persistência**: Já implementada (path_provider + sqflite); targets entre sessões via estado_target na BD
 3. **Separação de camadas**: Introduzir camada de domínio (models, use cases) e dados (repositories)
 4. **Gerenciamento de estado**: Considerar Provider, Riverpod ou Bloc para estado global
 5. **Targets customizados**: Associar modelos 3D específicos às páginas escaneadas (em vez do modelo fixo Astronaut.glb)
@@ -227,7 +228,7 @@ ProjetoTCC/
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
 │  │ TelaPrincipal│  │TelaListaPag.│  │   TelaAR    │              │
-│  │ TelaGaleria  │  │ TelaRescan  │  │ (Image Track)│              │
+│  │ TelaGaleria  │  │ TelaRescan  │  │ (OpenCV RA)  │              │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘              │
 │         │                 │                 │                     │
 │         └─────────────────┼─────────────────┘                     │

@@ -1,6 +1,6 @@
-# projetotcc
+# projetotcc (Marcador AR)
 
-A new Flutter project.
+Aplicativo Flutter para escaneamento de documentos e visualização em Realidade Aumentada. Consulte `docs/ARQUITETURA.md` para arquitetura e princípios do projeto.
 
 ## Getting Started
 

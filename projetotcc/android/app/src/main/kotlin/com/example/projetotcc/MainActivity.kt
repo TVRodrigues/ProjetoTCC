@@ -1,5 +1,8 @@
 package com.example.projetotcc
 
-import io.flutter.embedding.android.FlutterActivity
+// Alteramos a importação para suportar Fragmentos
+import io.flutter.embedding.android.FlutterFragmentActivity
 
-class MainActivity : FlutterActivity()
+// Alteramos a classe que ele herda
+class MainActivity: FlutterFragmentActivity() {
+}

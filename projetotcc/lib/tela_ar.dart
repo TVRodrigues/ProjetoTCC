@@ -1,63 +1,344 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:ar_flutter_plugin_plus/ar_flutter_plugin.dart';
-import 'package:ar_flutter_plugin_plus/datatypes/config_planedetection.dart';
-import 'package:ar_flutter_plugin_plus/datatypes/node_types.dart';
-import 'package:ar_flutter_plugin_plus/datatypes/hittest_result_types.dart';
-import 'package:ar_flutter_plugin_plus/managers/ar_anchor_manager.dart';
-import 'package:ar_flutter_plugin_plus/managers/ar_location_manager.dart';
-import 'package:ar_flutter_plugin_plus/managers/ar_object_manager.dart';
-import 'package:ar_flutter_plugin_plus/managers/ar_session_manager.dart';
-import 'package:ar_flutter_plugin_plus/models/ar_node.dart';
-import 'package:ar_flutter_plugin_plus/models/ar_anchor.dart';
-import 'package:ar_flutter_plugin_plus/models/ar_hittest_result.dart';
-import 'package:vector_math/vector_math_64.dart' as math;
+import 'package:permission_handler/permission_handler.dart';
+
+import 'services/ar_opencv_service.dart';
+import 'utils/camera_image_to_mat.dart';
 
 class TelaAR extends StatefulWidget {
-  const TelaAR({super.key});
+  final String? scanId;
+  final int? imagemId;
+
+  const TelaAR({super.key, this.scanId, this.imagemId});
 
   @override
   State<TelaAR> createState() => _TelaARState();
 }
 
 class _TelaARState extends State<TelaAR> {
-  ARSessionManager? arSessionManager;
-  ARObjectManager? arObjectManager;
-  ARAnchorManager? arAnchorManager;
+  static const Color _bgDark = Color(0xFF121212);
+  static const Color _appBarDark = Color(0xFF1E1E1E);
+  static const Duration _hintDelay = Duration(seconds: 5);
 
-  List<ARNode> nodes = [];
-  List<ARAnchor> anchors = [];
+  bool _temPermissaoCamera = false;
+  bool _permissaoNegada = false;
+  bool _mostrarDica = false;
+  String? _erroCamera;
+  CameraController? _cameraController;
+  ArOpencvService? _arService;
+  ArMatchResult? _matchAtual;
+  StreamSubscription<CameraImage>? _imageSubscription;
+  Timer? _timerDica;
+  List<CameraDescription>? _cameras;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      // RA apenas Android/iOS (spec 004)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Realidade aumentada disponível apenas em Android e iOS.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          Navigator.maybePop(context);
+        }
+      });
+      return;
+    }
+    if (widget.scanId == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.maybePop(context);
+      });
+      return;
+    }
+    _inicializar();
+  }
+
+  Future<void> _inicializar() async {
+    await _verificarTargets();
+    if (!mounted) return;
+    await _pedirPermissaoCamera();
+    if (!mounted) return;
+    if (_temPermissaoCamera) {
+      await _iniciarCamera();
+      if (mounted) _iniciarDicaTimer();
+    }
+  }
+
+  Future<void> _verificarTargets() async {
+    final scanId = widget.scanId;
+    if (scanId == null) return;
+    final paths = await ArOpencvService.getTargetPathsForSession(
+      scanId,
+      imagemId: widget.imagemId,
+    );
+    if (!mounted) return;
+    if (paths.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nenhuma página disponível para RA. Volte à lista de páginas.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      Navigator.pop(context);
+      return;
+    }
+    _arService = ArOpencvService(paths);
+    await _arService!.init();
+    if (!mounted) return;
+    if (_arService!.targetCount == 0) {
+      _arService!.dispose();
+      _arService = null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível carregar as imagens para reconhecimento.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      Navigator.pop(context);
+    }
+  }
+
+  Future<void> _pedirPermissaoCamera() async {
+    var status = await Permission.camera.status;
+    if (!status.isGranted) {
+      status = await Permission.camera.request();
+    }
+    if (!mounted) return;
+    setState(() {
+      _temPermissaoCamera = status.isGranted;
+      _permissaoNegada = status.isDenied || status.isPermanentlyDenied;
+    });
+  }
+
+  Future<void> _iniciarCamera() async {
+    try {
+      _cameras = await availableCameras();
+      if (_cameras == null || _cameras!.isEmpty) {
+        setState(() => _erroCamera = 'Nenhuma câmera disponível.');
+        return;
+      }
+      final controller = CameraController(
+        _cameras!.first,
+        ResolutionPreset.medium,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+        enableAudio: false,
+      );
+      await controller.initialize();
+      if (!mounted) return;
+      setState(() {
+        _cameraController = controller;
+        _erroCamera = null;
+      });
+      _iniciarStream();
+    } on CameraException catch (e) {
+      setState(() => _erroCamera = e.description ?? 'Erro ao iniciar câmera.');
+    } catch (e) {
+      setState(() => _erroCamera = 'Falha ao inicializar câmera.');
+    }
+  }
+
+  void _iniciarStream() {
+    _cameraController?.startImageStream((CameraImage image) {
+      if (_arService == null || !mounted) return;
+      final mat = cameraImageToMat(image);
+      if (mat == null) return;
+      try {
+        final result = _arService!.matchFrame(mat);
+        mat.dispose();
+        if (!mounted) return;
+        setState(() {
+          _matchAtual = result;
+          if (result != null) {
+            _mostrarDica = false;
+            _timerDica?.cancel();
+            _timerDica = Timer(_hintDelay, () {
+              if (mounted) setState(() => _mostrarDica = true);
+            });
+          }
+        });
+      } catch (_) {
+        mat.dispose();
+      }
+    });
+  }
+
+  void _iniciarDicaTimer() {
+    _timerDica?.cancel();
+    _timerDica = Timer(_hintDelay, () {
+      if (mounted && _matchAtual == null) {
+        setState(() => _mostrarDica = true);
+      }
+    });
+  }
+
+  void _aoTocarNaTela(TapDownDetails details) {
+    if (_matchAtual == null) return;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Anotação colada com sucesso no livro!'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
 
   @override
   void dispose() {
-    arSessionManager?.dispose();
+    _timerDica?.cancel();
+    _imageSubscription?.cancel();
+    _cameraController?.stopImageStream();
+    _cameraController?.dispose();
+    _arService?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return Scaffold(
+        backgroundColor: _bgDark,
+        appBar: AppBar(
+          title: const Text('Marcador RA'),
+          backgroundColor: _appBarDark,
+          foregroundColor: Colors.white,
+        ),
+        body: const Center(child: Text('RA não disponível nesta plataforma.')),
+      );
+    }
+
+    if (widget.scanId == null) {
+      return Scaffold(
+        backgroundColor: _bgDark,
+        appBar: AppBar(
+          title: const Text('Marcador RA'),
+          backgroundColor: _appBarDark,
+          foregroundColor: Colors.white,
+        ),
+        body: const Center(child: Text('Livro não selecionado.')),
+      );
+    }
+
     return Scaffold(
+      backgroundColor: _bgDark,
       appBar: AppBar(
-        title: const Text('Marcador RA (Toque na Tela)'),
-        backgroundColor: Colors.black87,
+        title: const Text('Marcador RA'),
+        backgroundColor: _appBarDark,
         foregroundColor: Colors.white,
       ),
-      body: Stack(
-        children: [
-          ARView(
-            onARViewCreated: onARViewCreated,
-            // Ligamos a deteção de planos (superfícies horizontais e verticais)
-            planeDetectionConfig: PlaneDetectionConfig.horizontalAndVertical,
-          ),
-          Align(
-            alignment: FractionalOffset.bottomCenter,
-            child: Container(
-              color: Colors.black54,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              margin: const EdgeInsets.only(bottom: 30),
-              child: const Text(
-                'Aponte para a página e toque nos pontos brancos para ancorar!',
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_permissaoNegada) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.camera_alt_outlined, size: 64, color: Colors.grey),
+              const SizedBox(height: 16),
+              const Text(
+                'É necessária permissão de câmera para usar a realidade aumentada.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: () => openAppSettings(),
+                child: const Text('Abrir definições'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!_temPermissaoCamera) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: Colors.white),
+            SizedBox(height: 16),
+            Text(
+              'Aguardando permissão da câmera...',
+              style: TextStyle(color: Colors.white),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_erroCamera != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.amber),
+              const SizedBox(height: 16),
+              Text(
+                _erroCamera!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        GestureDetector(
+          onTapDown: _aoTocarNaTela,
+          child: CameraPreview(_cameraController!),
+        ),
+        if (_matchAtual != null && _cameraController != null)
+          _buildOverlay(
+            _matchAtual!,
+            previewSize: _cameraController!.value.previewSize,
+          ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 30,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              margin: const EdgeInsets.symmetric(horizontal: 24),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _matchAtual != null
+                    ? 'Toque no ecrã para adicionar a anotação 3D!'
+                    : (_mostrarDica
+                        ? 'Aponte para uma página escaneada'
+                        : 'Aponte para a página e toque para anotar.'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -65,77 +346,67 @@ class _TelaARState extends State<TelaAR> {
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  void onARViewCreated(
-    ARSessionManager sessionManager,
-    ARObjectManager objectManager,
-    ARAnchorManager anchorManager,
-    ARLocationManager locationManager,
-  ) {
-    arSessionManager = sessionManager;
-    arObjectManager = objectManager;
-    arAnchorManager = anchorManager;
-
-    // LIGANDO OS PONTOS E A MALHA PADRÃO
-    arSessionManager!.onInitialize(
-      showFeaturePoints: true, // <-- Mudamos para true (mostra os pontinhos)
-      showPlanes: true, // <-- Mantemos true (mostra as superfícies)
-      // Removemos a linha do customPlaneTexturePath para usar a malha padrão do ARCore
-      showWorldOrigin: false,
-      handlePans: true,
-      handleRotation: true,
+  Widget _buildOverlay(ArMatchResult result, {Size? previewSize}) {
+    if (result.corners.length < 4) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return CustomPaint(
+          painter: _OverlayPainter(
+            corners: result.corners,
+            previewSize: previewSize ?? Size.zero,
+            layoutSize: Size(constraints.maxWidth, constraints.maxHeight),
+          ),
+          size: Size(constraints.maxWidth, constraints.maxHeight),
+        );
+      },
     );
-    arObjectManager!.onInitialize();
-
-    // Define o que acontece quando o utilizador toca no ecrã
-    arSessionManager!.onPlaneOrPointTap = onPlaneOrPointTapped;
   }
+}
 
-  // Função disparada ao tocar na superfície
-  // Função disparada ao tocar na superfície
-  Future<void> onPlaneOrPointTapped(
-    List<ARHitTestResult> hitTestResults,
-  ) async {
-    // Medida de segurança: se o utilizador tocou mas não houve interseção, ignoramos
-    if (hitTestResults.isEmpty) return;
+class _OverlayPainter extends CustomPainter {
+  final List<Offset> corners;
+  final Size previewSize;
+  final Size layoutSize;
 
-    // Procura se o utilizador tocou em cima de um plano válido detetado pelo telemóvel
-    var singleHitTestResult = hitTestResults.firstWhere(
-      (result) => result.type == ARHitTestResultType.plane,
-      orElse: () => hitTestResults.first,
-    );
+  _OverlayPainter({
+    required this.corners,
+    required this.previewSize,
+    required this.layoutSize,
+  });
 
-    // O Null Safety garante que temos um resultado válido, então criamos a âncora direto
-    var newAnchor = ARPlaneAnchor(
-      transformation: singleHitTestResult.worldTransform,
-    );
-    bool? didAddAnchor = await arAnchorManager!.addAnchor(newAnchor);
-
-    if (didAddAnchor == true) {
-      anchors.add(newAnchor);
-
-      // Prepara a nossa anotação 3D
-      var newNode = ARNode(
-        type: NodeType.webGLB,
-        uri:
-            "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/main/2.0/Duck/glTF-Binary/Duck.glb", // <-- MUDOU AQUI PARA main
-        scale: math.Vector3(0.05, 0.05, 0.05),
-        position: math.Vector3(0.0, 0.0, 0.0),
-        rotation: math.Vector4(1.0, 0.0, 0.0, 0.0),
-      );
-
-      // Adiciona o nó 3D "grudado" na âncora
-      bool? didAddNodeToAnchor = await arObjectManager!.addNode(
-        newNode,
-        planeAnchor: newAnchor,
-      );
-      if (didAddNodeToAnchor == true) {
-        nodes.add(newNode);
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (previewSize.width <= 0 || previewSize.height <= 0) return;
+    final scaleW = layoutSize.width / previewSize.width;
+    final scaleH = layoutSize.height / previewSize.height;
+    final scale = scaleW < scaleH ? scaleW : scaleH;
+    final offsetX = (layoutSize.width - previewSize.width * scale) / 2;
+    final offsetY = (layoutSize.height - previewSize.height * scale) / 2;
+    final paint = Paint()
+      ..color = Colors.green.withValues(alpha: 0.8)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4;
+    final path = Path();
+    for (var i = 0; i < corners.length; i++) {
+      final p = Offset(offsetX + corners[i].dx * scale, offsetY + corners[i].dy * scale);
+      if (i == 0) {
+        path.moveTo(p.dx, p.dy);
+      } else {
+        path.lineTo(p.dx, p.dy);
       }
     }
+    path.close();
+    canvas.drawPath(path, paint);
   }
+
+  @override
+  bool shouldRepaint(covariant _OverlayPainter old) =>
+      old.corners != corners ||
+      old.previewSize != previewSize ||
+      old.layoutSize != layoutSize;
 }

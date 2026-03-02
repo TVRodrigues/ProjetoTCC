@@ -2,8 +2,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_document_scanner/google_mlkit_document_scanner.dart';
 import 'tela_principal.dart';
+import 'services/scan_storage_service.dart';
+import 'services/target_pipeline_service.dart';
+import 'services/seed_database_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SeedDatabaseService.seedSeNecessario();
   runApp(const MeuMarcadorApp());
 }
 
@@ -75,11 +80,126 @@ class _TelaGaleriaState extends State<TelaGaleria> {
     }
   }
 
-  // Função que simula o envio dessas imagens para o algoritmo de RA (Target)
   void _salvarTargets() {
-    // Agora o botão de salvar do Scanner apenas fecha a tela da câmera
-    // e volta para a Tela Principal (Hub Central)
-    Navigator.pop(context);
+    _mostrarFormularioSalvar();
+  }
+
+  void _mostrarFormularioSalvar() {
+    final tituloController = TextEditingController();
+    final autorController = TextEditingController();
+    final resumoController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Guardar Scan'),
+        content: Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: tituloController,
+                  decoration: const InputDecoration(
+                    labelText: 'Título do livro *',
+                    hintText: 'Ex: Dom Quixote',
+                  ),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'O título é obrigatório';
+                    }
+                    return null;
+                  },
+                  autofocus: true,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: autorController,
+                  decoration: const InputDecoration(
+                    labelText: 'Autor',
+                    hintText: 'Ex: Miguel de Cervantes',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: resumoController,
+                  decoration: const InputDecoration(
+                    labelText: 'Resumo',
+                    hintText: 'Notas ou resumo (opcional)',
+                  ),
+                  maxLines: 3,
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+            },
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              if (formKey.currentState?.validate() != true) return;
+              final titulo = tituloController.text.trim();
+              if (titulo.isEmpty) return;
+
+              final navigator = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
+
+              try {
+                final scan = await ScanStorageService().saveScan(
+                  titulo: titulo,
+                  autor: autorController.text.trim().isEmpty
+                      ? null
+                      : autorController.text.trim(),
+                  resumo: resumoController.text.trim().isEmpty
+                      ? null
+                      : resumoController.text.trim(),
+                  imagePaths: _paginasEscaneadas,
+                );
+                if (!mounted) return;
+                TargetPipelineService().processScan(scan.id);
+                // ignore: use_build_context_synchronously - ctx is dialog context, still valid
+                Navigator.pop(ctx);
+                if (!mounted) return;
+                navigator.pop(true);
+                messenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('Scan guardado com sucesso'),
+                    backgroundColor: Colors.green,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                String msg = 'Erro ao guardar. Tente novamente.';
+                if (e is StoragePermissionDeniedException) {
+                  msg = e.message;
+                } else if (e is StorageFullException) {
+                  msg = e.message;
+                } else if (e is ValidationException) {
+                  msg = e.message;
+                }
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(msg),
+                    backgroundColor: Colors.red,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
   }
 
   // Função para remover uma foto da galeria se o usuário não gostar
@@ -129,7 +249,7 @@ class _TelaGaleriaState extends State<TelaGaleria> {
                 color: const Color(0xFF1E1E1E),
                 padding: const EdgeInsets.all(16.0),
                 child: ElevatedButton(
-                  onPressed: _salvarTargets,
+                  onPressed: _paginasEscaneadas.isEmpty ? null : _salvarTargets,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
                     foregroundColor: Colors.white,

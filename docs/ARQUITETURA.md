@@ -66,7 +66,7 @@ O projeto segue uma estrutura **monolítica em camada única** (tela única), co
 | **TelaListaPaginas** | tela_lista_paginas.dart | Lista de páginas do livro com indicadores (verde/amarelo/vermelho/roxo/cinzento) |
 | **TelaGaleria** | main.dart | Scanner de documentos, galeria de páginas |
 | **TelaRescan** | tela_rescan.dart | Scanner único para substituir página que falhou |
-| **TelaAR** | tela_ar.dart | Visualizador de RA com OpenCV (reconhecimento de página + overlay), ancoragem de anotações (Android/iOS) |
+| **TelaAR** | tela_ar.dart | Visualizador de RA com OpenCV (reconhecimento de página + overlay), mira central, botão de nota, post-its ancorados e balão de anotação (feature 005; Android/iOS) |
 
 ### 4.2 Camada de Serviços (Plugins e Serviços Locais)
 
@@ -77,6 +77,7 @@ O projeto segue uma estrutura **monolítica em camada única** (tela única), co
 - **Permission Handler**: Solicitação de permissão de câmera e storage
 - **Camera**: Preview e stream de imagens para TelaAR (conversão para OpenCV via utils/camera_image_to_mat)
 - **ScanStorageService** (feature 001): Persistência de imagens (path_provider) e metadados (sqflite)
+- **ScanDatabase** (feature 005): Tabela `anotacoes_postit` para anotações em forma de post-it (texto, posição normalizada u/v, associação à página); CRUD local
 - **SeedDatabaseService**: Inserção opcional de livro demo em modo debug (chamado em main())
 
 ---
@@ -92,10 +93,11 @@ ProjetoTCC/
 │   │   ├── tela_ar.dart            # Tela de Realidade Aumentada
 │   │   ├── models/
 │   │   │   ├── scan.dart           # Modelo Scan (título, autor, resumo, imagens)
-│   │   │   └── imagem_page.dart    # Modelo ImagemPage (estado_target, numero_pagina)
+│   │   │   ├── imagem_page.dart    # Modelo ImagemPage (estado_target, numero_pagina)
+│   │   │   └── anotacao_postit.dart # Modelo AnotacaoPostit (feature 005: post-it ancorado, u/v, texto)
 │   │   ├── services/
 │   │   │   ├── scan_storage_service.dart   # Persistência de scans
-│   │   │   ├── scan_database.dart          # SQLite, CRUD, migration v2
+│   │   │   ├── scan_database.dart          # SQLite, CRUD, migrations v2/v3 (anotacoes_postit)
 │   │   │   ├── target_pipeline_service.dart # Pipeline de targets AR
 │   │   │   ├── image_analysis_service.dart # Análise de imagem (ML Kit)
 │   │   │   ├── ar_opencv_service.dart      # RA com OpenCV (targets, matching, homografia)
@@ -172,12 +174,13 @@ ProjetoTCC/
 |------|---------------------|-----------|
 | **TelaPrincipal** | `_count`, `_scans`, `_phase`, `_errorMessage` | Fases de carregamento (count/skeleton/details), lista de livros, mensagem de erro |
 | **TelaGaleria** | `_paginasEscaneadas`, `_processando` | Lista de imagens (paths) e estado do scanner |
-| **TelaAR** | `_cameraController`, `_arService`, `_matchAtual`, `_temPermissaoCamera` | Câmera, ArOpencvService, resultado de match, permissões |
+| **TelaAR** | `_cameraController`, `_arService`, `_matchAtual`, `_temPermissaoCamera`, `_anotacoes` | Câmera, ArOpencvService, match atual, permissões, lista de post-its da página (feature 005) |
 
 ### Persistência
 
 - **Feature 001**: Imagens em diretório privado (path_provider); metadados em SQLite (sqflite).
 - **Feature 003**: Migration v2 — tabela `imagens` estendida com `numero_pagina`, `eh_pagina`, `estado_target`, `qualidade_target`.
+- **Feature 005**: Migration v3 — tabela `anotacoes_postit` (id, scan_id, imagem_id, u, v, texto, created_at, updated_at). As posições dos post-its são guardadas em coordenadas normalizadas **(u, v)** (0–1) em relação ao quadrilátero do target; na tela de RA, a homografia do frame é usada para projetar (u, v) de volta para o ecrã, mantendo os post-its ancorados à página quando o utilizador move o dispositivo. Anotações são apenas locais (sem sincronização entre dispositivos).
 
 ---
 
@@ -243,4 +246,4 @@ ProjetoTCC/
 
 ---
 
-*Documento gerado com base na análise do código-fonte do projeto. Última atualização: Fevereiro 2026. Feature 004: RA baseada em OpenCV (opencv_dart), apenas Android/iOS.*
+*Documento gerado com base na análise do código-fonte do projeto. Última atualização: Fevereiro 2026. Feature 004: RA baseada em OpenCV (opencv_dart), apenas Android/iOS. Feature 005: Post-its e anotações ancoradas na tela de RA (mira, botão de nota, persistência local).*

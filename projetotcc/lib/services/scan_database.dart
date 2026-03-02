@@ -243,16 +243,18 @@ class ScanDatabase {
   /// Insere uma nova anotação (post-it) e devolve o id gerado.
   static Future<int> insertAnotacao(AnotacaoPostit anotacao) async {
     final db = await database;
-    return db.insert('anotacoes_postit', anotacao.toMap());
+    final map = anotacao.toMap()
+      ..remove('id'); // id é AUTOINCREMENT
+    return db.insert('anotacoes_postit', map);
   }
 
-  /// Atualiza uma anotação existente. Se o id for nulo, não faz nada.
+  /// Atualiza uma anotação existente (texto e updated_at). Se o id for nulo, não faz nada.
   static Future<void> updateAnotacao(AnotacaoPostit anotacao) async {
     if (anotacao.id == null) return;
     final db = await database;
     await db.update(
       'anotacoes_postit',
-      anotacao.toMap(),
+      {'texto': anotacao.texto, 'updated_at': anotacao.updatedAt},
       where: 'id = ?',
       whereArgs: [anotacao.id],
     );

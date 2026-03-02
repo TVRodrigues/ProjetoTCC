@@ -27,6 +27,8 @@ class _TelaARState extends State<TelaAR> {
   static const Color _appBarDark = Color(0xFF1E1E1E);
   static const Duration _hintDelay = Duration(seconds: 5);
   static const double _miraSize = 28;
+  static const double _postitTapRadius = 48;
+  static const int _maxCharsAnotacao = 1000;
 
   bool _temPermissaoCamera = false;
   bool _permissaoNegada = false;
@@ -115,6 +117,20 @@ class _TelaARState extends State<TelaAR> {
         ),
       );
       Navigator.pop(context);
+      return;
+    }
+    // Restaurar anotações persistidas para esta página (spec 005)
+    if (widget.imagemId != null) {
+      final list = await ScanDatabase.getAnotacoesForImagem(
+        scanId,
+        widget.imagemId!,
+      );
+      if (mounted) {
+        setState(() {
+          _anotacoes.clear();
+          _anotacoes.addAll(list);
+        });
+      }
     }
   }
 
@@ -248,16 +264,107 @@ class _TelaARState extends State<TelaAR> {
     });
   }
 
-  void _aoTocarNaTela(TapDownDetails details) {
-    if (_matchAtual == null) return;
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Anotação colada com sucesso no livro!'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+  void _aoTocarNaTela(
+    TapDownDetails details, {
+    required Size layoutSize,
+    required Size previewSize,
+  }) {
+    if (_matchAtual == null || _anotacoes.isEmpty) return;
+    final screenCorners = _projectCornersToScreen(
+      _matchAtual!.corners,
+      previewSize,
+      layoutSize,
+    );
+    final tap = details.localPosition;
+    AnotacaoPostit? selecionada;
+    var minDist = _postitTapRadius;
+    for (final a in _anotacoes) {
+      final pos = _projectUvToScreen(a.u, a.v, screenCorners);
+      final d = (tap - pos).distance;
+      if (d < minDist) {
+        minDist = d;
+        selecionada = a;
+      }
+    }
+    if (selecionada != null && mounted) {
+      _abrirBalaoAnotacao(selecionada);
+    }
+  }
+
+  Future<void> _abrirBalaoAnotacao(AnotacaoPostit anotacao) async {
+    final controller = TextEditingController(text: anotacao.texto);
+    final salvar = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Anotação'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      maxLines: 4,
+                      maxLength: _maxCharsAnotacao,
+                      decoration: const InputDecoration(
+                        hintText: 'Escreva a sua anotação...',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${controller.text.length}/$_maxCharsAnotacao',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('OK'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (!mounted || salvar != true) return;
+    final newText = controller.text;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final updated = anotacao.copyWith(
+      texto: newText.length > _maxCharsAnotacao
+          ? newText.substring(0, _maxCharsAnotacao)
+          : newText,
+      updatedAt: now,
+    );
+    try {
+      await ScanDatabase.updateAnotacao(updated);
+      if (!mounted) return;
+      setState(() {
+        final idx = _anotacoes.indexWhere((a) => a.id == anotacao.id);
+        if (idx >= 0) _anotacoes[idx] = updated;
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível guardar a anotação.'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
@@ -382,7 +489,8 @@ class _TelaARState extends State<TelaAR> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final layoutSize = Size(constraints.maxWidth, constraints.maxHeight);
-        final previewSize = _cameraController!.value.previewSize;
+        final previewSize =
+            _cameraController!.value.previewSize ?? Size.zero;
         final centroTela =
             Offset(layoutSize.width / 2, layoutSize.height / 2);
 
@@ -390,7 +498,11 @@ class _TelaARState extends State<TelaAR> {
           fit: StackFit.expand,
           children: [
             GestureDetector(
-              onTapDown: _aoTocarNaTela,
+              onTapDown: (d) => _aoTocarNaTela(
+                d,
+                layoutSize: layoutSize,
+                previewSize: previewSize,
+              ),
               child: CameraPreview(_cameraController!),
             ),
             if (_matchAtual != null && _cameraController != null)
@@ -398,6 +510,7 @@ class _TelaARState extends State<TelaAR> {
                 _matchAtual!,
                 previewSize: previewSize,
                 layoutSize: layoutSize,
+                anotacoes: _anotacoes,
               ),
             // Mira vermelha translúcida fixa no centro
             IgnorePointer(
@@ -473,13 +586,21 @@ class _TelaARState extends State<TelaAR> {
     ArMatchResult result, {
     required Size previewSize,
     required Size layoutSize,
+    required List<AnotacaoPostit> anotacoes,
   }) {
     if (result.corners.length < 4) return const SizedBox.shrink();
+    final screenCorners = _projectCornersToScreen(
+      result.corners,
+      previewSize,
+      layoutSize,
+    );
     return CustomPaint(
       painter: _OverlayPainter(
         corners: result.corners,
         previewSize: previewSize,
         layoutSize: layoutSize,
+        anotacoes: anotacoes,
+        screenCorners: screenCorners,
       ),
       size: layoutSize,
     );
@@ -490,6 +611,7 @@ class _TelaARState extends State<TelaAR> {
     required Size previewSize,
     required Offset centroTela,
   }) async {
+    if (previewSize.width <= 0 || previewSize.height <= 0) return;
     if (widget.scanId == null) return;
     if (widget.imagemId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -590,11 +712,15 @@ class _OverlayPainter extends CustomPainter {
   final List<Offset> corners;
   final Size previewSize;
   final Size layoutSize;
+  final List<AnotacaoPostit> anotacoes;
+  final List<Offset> screenCorners;
 
   _OverlayPainter({
     required this.corners,
     required this.previewSize,
     required this.layoutSize,
+    required this.anotacoes,
+    required this.screenCorners,
   });
 
   @override
@@ -625,13 +751,56 @@ class _OverlayPainter extends CustomPainter {
     }
     path.close();
     canvas.drawPath(path, paint);
+
+    // Post-its ancorados (spec 005)
+    if (screenCorners.length >= 4) {
+      const postitSize = 32.0;
+      final half = postitSize / 2;
+      for (final a in anotacoes) {
+        final center = _projectUvToScreen(a.u, a.v, screenCorners);
+        final rect = Rect.fromLTWH(
+          center.dx - half,
+          center.dy - half,
+          postitSize,
+          postitSize,
+        );
+        final postitPaint = Paint()
+          ..color = Colors.amber.withValues(alpha: 0.95)
+          ..style = PaintingStyle.fill;
+        canvas.drawRect(rect, postitPaint);
+        final borderPaint = Paint()
+          ..color = Colors.amber.shade700
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5;
+        canvas.drawRect(rect, borderPaint);
+      }
+    }
   }
 
   @override
   bool shouldRepaint(covariant _OverlayPainter old) =>
       old.corners != corners ||
       old.previewSize != previewSize ||
-      old.layoutSize != layoutSize;
+      old.layoutSize != layoutSize ||
+      old.anotacoes != anotacoes ||
+      old.screenCorners != screenCorners;
+}
+
+Offset _projectUvToScreen(double u, double v, List<Offset> screenCorners) {
+  if (screenCorners.length < 4) return Offset.zero;
+  final c0 = screenCorners[0];
+  final c1 = screenCorners[1];
+  final c2 = screenCorners[2];
+  final c3 = screenCorners[3];
+  final dx = (1 - u) * (1 - v) * c0.dx +
+      u * (1 - v) * c1.dx +
+      u * v * c2.dx +
+      (1 - u) * v * c3.dx;
+  final dy = (1 - u) * (1 - v) * c0.dy +
+      u * (1 - v) * c1.dy +
+      u * v * c2.dy +
+      (1 - u) * v * c3.dy;
+  return Offset(dx, dy);
 }
 
 List<Offset> _projectCornersToScreen(

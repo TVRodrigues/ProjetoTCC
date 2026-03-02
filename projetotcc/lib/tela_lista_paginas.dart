@@ -64,6 +64,11 @@ class _TelaListaPaginasState extends State<TelaListaPaginas> {
     }
   }
 
+  /// Texto do número da página para o indicador verde (numeroPagina ?? ordem).
+  String _numeroPaginaLabel(ImagemPage img) {
+    return '${img.numeroPagina ?? img.ordem}';
+  }
+
   void _aoTocarPagina(ImagemPage img) {
     if (img.estadoTarget == 'processando') return;
     if (img.estadoTarget == 'nao_pagina') return; // Apenas visualização
@@ -163,24 +168,41 @@ class _TelaListaPaginasState extends State<TelaListaPaginas> {
                               ),
                             ),
                             Container(
+                              width: 44,
+                              height: 44,
                               padding: const EdgeInsets.all(8),
                               decoration: BoxDecoration(
                                 color: cor.withValues(alpha: 0.3),
                                 shape: BoxShape.circle,
                               ),
-                              child: Icon(
-                                img.estadoTarget == 'processando'
-                                    ? Icons.hourglass_empty
-                                    : img.estadoTarget == 'sucesso'
-                                        ? Icons.check_circle
-                                        : img.estadoTarget == 'nao_pagina'
-                                            ? Icons.visibility
-                                            : img.estadoTarget == 'rescan'
-                                                ? Icons.camera_alt
-                                                : Icons.error,
-                                color: cor,
-                                size: 24,
-                              ),
+                              child: img.estadoTarget == 'sucesso'
+                                  ? Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.check_circle, color: cor, size: 24),
+                                        FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          child: Text(
+                                            _numeroPaginaLabel(img),
+                                            style: TextStyle(color: cor, fontSize: 11),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.clip,
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : Icon(
+                                      img.estadoTarget == 'processando'
+                                          ? Icons.hourglass_empty
+                                          : img.estadoTarget == 'nao_pagina'
+                                              ? Icons.visibility
+                                              : img.estadoTarget == 'rescan'
+                                                  ? Icons.camera_alt
+                                                  : Icons.error,
+                                      color: cor,
+                                      size: 24,
+                                    ),
                             ),
                           ],
                         ),
